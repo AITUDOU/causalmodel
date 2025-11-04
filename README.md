@@ -29,7 +29,7 @@ git clone <repository_url>
 cd causalmodel
 
 # 创建虚拟环境（推荐）
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate  # Linux/Mac
 # 或
 venv\Scripts\activate  # Windows
@@ -44,10 +44,10 @@ pip install -r requirements.txt
 
 ```bash
 # 归因分析 + 干预分析
-python concrete_causal_demo.py
+python3 concrete_causal_demo.py
 
 # 反事实分析（需先运行上面的脚本生成因果模型）
-python concrete_counterfactual_demo.py
+python3 concrete_counterfactual_demo.py
 ```
 
 **输出文件**：
@@ -63,7 +63,7 @@ python concrete_counterfactual_demo.py
 cd engineering_inspection_analysis
 
 # 运行完整分析流程
-python inspection_analysis_demo.py
+python3 inspection_analysis_demo.py
 ```
 
 **输出文件**：
@@ -96,15 +96,15 @@ causalmodel/
 │   ├── visualization.py                # 可视化工具
 │   └── utils.py                        # 工具函数
 │
-├── concrete_causal_demo.py             # 【演示1】混凝土归因+干预分析
-├── concrete_counterfactual_demo.py     # 【演示2】混凝土反事实分析
+├── concrete_causal_demo.py             # 【演示1】混凝土归因+干预分析（python3 concrete_causal_demo.py）
+├── concrete_counterfactual_demo.py     # 【演示2】混凝土反事实分析（python3 concrete_counterfactual_demo.py）
 ├── counterfactual_analysis.py          # 反事实分析通用模块
 ├── visualize_chinese_graph.py          # 中文因果图可视化
 │
 ├── engineering_inspection_analysis/    # 工程检测分析子项目
 │   ├── README.md                       # 子项目说明
 │   ├── requirements.txt                # 子项目依赖
-│   ├── inspection_analysis_demo.py     # 【演示3】检测归因+干预+反事实
+│   ├── inspection_analysis_demo.py     # 【演示3】检测归因+干预+反事实（python3 inspection_analysis_demo.py）
 │   ├── quick_test.py                   # 快速测试脚本
 │   │
 │   ├── data/                           # 检测数据
@@ -212,7 +212,7 @@ causalmodel/
 **场景**：工艺优化后混凝土强度提升，找出主要贡献因素
 
 ```bash
-python concrete_causal_demo.py
+python3 concrete_causal_demo.py
 ```
 
 **输出解读**：
@@ -254,7 +254,7 @@ python concrete_causal_demo.py
 **场景**：针对不达标批次，模拟优化方案效果
 
 ```bash
-python concrete_counterfactual_demo.py
+python3 concrete_counterfactual_demo.py
 ```
 
 **输出解读**：
@@ -292,7 +292,7 @@ python concrete_counterfactual_demo.py
 
 ```bash
 cd engineering_inspection_analysis
-python inspection_analysis_demo.py
+python3 inspection_analysis_demo.py
 ```
 
 **分析流程**：
