@@ -1,6 +1,6 @@
 """
-混凝土集料和配合比因果模型
-基于 DoWhy 进行因果分析
+混凝土抗压强度因果模型 - 基于真实Kaggle数据集
+数据来源：Concrete Compressive Strength Dataset (UCI Machine Learning Repository)
 """
 
 import networkx as nx
@@ -10,13 +10,11 @@ from typing import Dict, List, Tuple, Callable
 from functools import partial
 
 from dowhy import gcm
-from dowhy.utils.plotting import plot
 from scipy import stats
-from statsmodels.stats.multitest import multipletests
 
 
-class ConcreteAggregateCausalModel:
-    """混凝土集料和配合比因果模型"""
+class ConcreteStrengthCausalModel:
+    """混凝土抗压强度因果模型（真实数据）"""
     
     def __init__(self, df: pd.DataFrame):
         """
@@ -25,275 +23,119 @@ class ConcreteAggregateCausalModel:
         Parameters:
         -----------
         df : pd.DataFrame
-            混凝土集料数据
+            混凝土抗压强度数据
+            
+        数据字段（9个）：
+        - cement: 水泥 (kg/m³)
+        - blast_furnace_slag: 高炉矿渣 (kg/m³)
+        - fly_ash: 粉煤灰 (kg/m³)
+        - water: 水 (kg/m³)
+        - superplasticizer: 高效减水剂 (kg/m³)
+        - coarse_aggregate: 粗骨料 (kg/m³)
+        - fine_aggregate: 细骨料 (kg/m³)
+        - age: 龄期 (天)
+        - concrete_compressive_strength: 抗压强度 (MPa)
         """
         self.df = df
         self.causal_graph = None
         self.causal_model = None
-        
+    
     def build_causal_graph(self) -> nx.DiGraph:
         """
-        构建混凝土集料因果图
+        构建混凝土强度因果图（仅使用9个原始变量）
         
-        基于图片中的因果关系：
-        1. 集料系统：集料类型 → 材质 → 质量指标 → 混凝土强度
-        2. 产地影响：产地 → 砂率、材质 → 强度
-        3. 工艺影响：生产工艺 → 含泥量、泥块含量
-        4. 配合比系统：水胶比 → 胶凝材料 → 配合比准确性 → 强度
-        5. 工程性能：混凝土强度 → 质量合格率、路面性能、结构强度
+        基于Yeh 1998论文和混凝土材料科学理论
+        
+        核心因果关系：
+        1. **水-减水剂负相关**（r = -0.66）：减水剂越多，所需水越少
+        2. **水泥主导强度**：活性最高的胶凝材料
+        3. **矿物掺合料协同**：矿渣和粉煤灰的长期强度贡献
+        4. **龄期效应**：强度随时间发展
+        5. **骨料影响**：细骨料和粗骨料对强度的影响
+        
+        参考文献：
+        - Yeh, I-Cheng (1998). "Modeling of strength of high-performance concrete using ANN"
+        - UCI Machine Learning Repository
         
         Returns:
         --------
         nx.DiGraph
-            因果图
+            因果图（仅9个原始变量）
         """
         edges = []
         
-        # ===== 集料系统因果关系 =====
+        print("构建混凝土强度因果图（仅9个原始变量）...")
         
-        # 1. 集料类型 → 材质密度
-        edges.append(('aggregate_type', 'material_density'))
+        # ===== 根节点（外生变量）=====
+        # cement, blast_furnace_slag, fly_ash, superplasticizer, 
+        # coarse_aggregate, fine_aggregate, age
         
-        # 2. 产地 → 材质密度、砂率
-        edges.append(('origin', 'material_density'))
-        edges.append(('origin', 'sand_rate'))
+        # ===== 关键因果关系 =====
         
-        # 3. 集料 → 砂石比例
-        edges.append(('coarse_aggregate_pct', 'sand_pct'))
-        edges.append(('sand_pct', 'sand_rate'))
+        # 1. 减水剂 → 水（负相关，r = -0.66）
+        #    减水剂分散水泥颗粒，减少所需水量
+        edges.append(('superplasticizer', 'water'))
         
-        # 4. 材质 → 质量指标
-        edges.append(('material_density', 'particle_shape_index'))
-        edges.append(('material_density', 'crushing_value_pct'))
-        edges.append(('material_density', 'flaky_particle_pct'))
+        # 2. 水泥 → 强度（最关键的胶凝材料）⭐⭐⭐
+        edges.append(('cement', 'concrete_compressive_strength'))
         
-        # 5. 生产工艺 → 质量指标
-        edges.append(('production_process', 'particle_shape_index'))
-        edges.append(('production_process', 'flaky_particle_pct'))
-        edges.append(('production_process', 'mud_content_pct'))
-        edges.append(('production_process', 'clay_lump_pct'))
+        # 3. 高炉矿渣 → 强度（提高密实度和耐久性）⭐⭐
+        edges.append(('blast_furnace_slag', 'concrete_compressive_strength'))
         
-        # 6. 环境因素 → 含泥量
-        edges.append(('ambient_humidity_pct', 'mud_content_pct'))
+        # 4. 粉煤灰 → 强度（火山灰反应，长期强度）⭐⭐
+        edges.append(('fly_ash', 'concrete_compressive_strength'))
         
-        # 7. 含泥量 → 泥块含量
-        edges.append(('mud_content_pct', 'clay_lump_pct'))
+        # 5. 水 → 强度（水胶比效应的体现，Abrams定律）⭐⭐⭐
+        #    水越多，强度越低（负相关）
+        edges.append(('water', 'concrete_compressive_strength'))
         
-        # ===== 配合比系统因果关系 =====
+        # 6. 减水剂 → 强度（改善密实度）⭐
+        edges.append(('superplasticizer', 'concrete_compressive_strength'))
         
-        # 8. 水胶比 → 胶凝材料用量
-        edges.append(('water_binder_ratio', 'fly_ash_content'))
-        edges.append(('water_binder_ratio', 'slag_powder_content'))
-        edges.append(('water_binder_ratio', 'water_content'))
-        edges.append(('water_binder_ratio', 'admixture_content'))
+        # 7. 粗骨料 → 强度（骨架作用）
+        edges.append(('coarse_aggregate', 'concrete_compressive_strength'))
         
-        # 9. 胶凝材料 → 总胶凝材料量
-        edges.append(('cement_content', 'total_binder'))
-        edges.append(('fly_ash_content', 'total_binder'))
-        edges.append(('slag_powder_content', 'total_binder'))
+        # 8. 细骨料 → 强度（填充作用）
+        edges.append(('fine_aggregate', 'concrete_compressive_strength'))
         
-        # 10. 胶凝材料 → 掺配比例
-        edges.append(('cement_content', 'mix_ratio'))
-        edges.append(('total_binder', 'mix_ratio'))
-        
-        # 11. 掺配比例和水胶比 → 配合比准确性
-        edges.append(('water_binder_ratio', 'mix_design_accuracy_pct'))
-        edges.append(('mix_ratio', 'mix_design_accuracy_pct'))
-        
-        # ===== 混凝土强度因果关系 =====
-        
-        # 12. 质量指标 → 混凝土强度
-        edges.append(('particle_shape_index', 'concrete_strength_mpa'))
-        edges.append(('crushing_value_pct', 'concrete_strength_mpa'))
-        edges.append(('flaky_particle_pct', 'concrete_strength_mpa'))
-        edges.append(('mud_content_pct', 'concrete_strength_mpa'))
-        edges.append(('clay_lump_pct', 'concrete_strength_mpa'))
-        
-        # 13. 材质和产地 → 混凝土强度
-        edges.append(('material_density', 'concrete_strength_mpa'))
-        edges.append(('origin', 'concrete_strength_mpa'))
-        
-        # 14. 配合比系统 → 混凝土强度
-        edges.append(('water_binder_ratio', 'concrete_strength_mpa'))
-        edges.append(('mix_design_accuracy_pct', 'concrete_strength_mpa'))
-        
-        # 15. 砂率 → 混凝土强度
-        edges.append(('sand_rate', 'concrete_strength_mpa'))
-        
-        # ===== 工程性能因果关系 =====
-        
-        # 16. 混凝土强度 → 质量合格率
-        edges.append(('concrete_strength_mpa', 'quality_pass'))
-        edges.append(('concrete_strength_mpa', 'quality_pass_rate_pct'))
-        
-        # 17. 混凝土强度和质量指标 → 路面性能
-        edges.append(('concrete_strength_mpa', 'pavement_performance_score'))
-        edges.append(('particle_shape_index', 'pavement_performance_score'))
-        edges.append(('flaky_particle_pct', 'pavement_performance_score'))
-        
-        # 18. 混凝土强度和配合比 → 结构强度
-        edges.append(('concrete_strength_mpa', 'structural_strength_mpa'))
-        edges.append(('mix_design_accuracy_pct', 'structural_strength_mpa'))
-        edges.append(('aggregate_type', 'structural_strength_mpa'))
+        # 9. 龄期 → 强度（时间效应，水化反应持续）⭐⭐⭐
+        edges.append(('age', 'concrete_compressive_strength'))
         
         self.causal_graph = nx.DiGraph(edges)
+        
+        print(f"✓ 因果图构建完成（仅9个原始变量，无衍生变量）")
+        print(f"  节点数: {self.causal_graph.number_of_nodes()}")
+        print(f"  边数: {self.causal_graph.number_of_edges()}")
+        print(f"\n核心因果路径：")
+        print(f"  ⭐⭐⭐ 水泥 → 强度")
+        print(f"  ⭐⭐⭐ 水 → 强度（Abrams定律：水越多强度越低）")
+        print(f"  ⭐⭐⭐ 龄期 → 强度（时间效应）")
+        print(f"  ⭐⭐  矿渣 → 强度")
+        print(f"  ⭐⭐  粉煤灰 → 强度")
+        print(f"  ⭐   减水剂 → 水（负相关）+ 减水剂 → 强度")
+        
         return self.causal_graph
     
-    def test_causal_minimality(self, 
-                               target: str, 
-                               method: str = 'kernel',
-                               significance_level: float = 0.10,
-                               fdr_control_method: str = 'fdr_bh') -> List[str]:
-        """
-        测试因果最小性，识别不显著的边
-        
-        Parameters:
-        -----------
-        target : str
-            目标节点
-        method : str
-            独立性检验方法
-        significance_level : float
-            显著性水平
-        fdr_control_method : str
-            错误发现率控制方法
-            
-        Returns:
-        --------
-        List[str]
-            不显著的父节点列表
-        """
-        if self.causal_graph is None:
-            raise ValueError("请先构建因果图")
-        
-        p_vals = []
-        all_parents = list(self.causal_graph.predecessors(target))
-        
-        for node in all_parents:
-            tmp_conditioning_set = list(all_parents)
-            tmp_conditioning_set.remove(node)
-            
-            # 处理分类变量
-            if self.df[node].dtype == 'object':
-                # 使用one-hot编码
-                node_data = pd.get_dummies(self.df[node], drop_first=True).values
-                if node_data.ndim == 1:
-                    node_data = node_data.reshape(-1, 1)
-            else:
-                node_data = self.df[node].to_numpy()
-            
-            if len(tmp_conditioning_set) > 0:
-                # 处理条件集中的分类变量
-                conditioning_data = []
-                for cond_node in tmp_conditioning_set:
-                    if self.df[cond_node].dtype == 'object':
-                        cond_data = pd.get_dummies(self.df[cond_node], drop_first=True).values
-                        if cond_data.ndim == 1:
-                            cond_data = cond_data.reshape(-1, 1)
-                        conditioning_data.append(cond_data)
-                    else:
-                        conditioning_data.append(self.df[cond_node].to_numpy().reshape(-1, 1))
-                conditioning_array = np.hstack(conditioning_data)
-            else:
-                conditioning_array = None
-            
-            try:
-                if conditioning_array is not None:
-                    p_val = gcm.independence_test(
-                        self.df[target].to_numpy(), 
-                        node_data, 
-                        conditioning_array, 
-                        method=method
-                    )
-                else:
-                    p_val = gcm.independence_test(
-                        self.df[target].to_numpy(), 
-                        node_data, 
-                        method=method
-                    )
-                p_vals.append(p_val)
-            except Exception as e:
-                print(f"警告: 节点 {node} 的独立性检验失败: {e}")
-                p_vals.append(1.0)  # 保守处理，假设独立
-        
-        if fdr_control_method is not None and len(p_vals) > 0:
-            p_vals = multipletests(p_vals, significance_level, method=fdr_control_method)[1]
-        
-        nodes_above_threshold = []
-        nodes_below_threshold = []
-        
-        for i, node in enumerate(all_parents):
-            if p_vals[i] < significance_level:
-                nodes_above_threshold.append(node)
-            else:
-                nodes_below_threshold.append(node)
-        
-        print(f"显著连接: {[(n, target) for n in sorted(nodes_above_threshold)]}")
-        print(f"不显著连接: {[(n, target) for n in sorted(nodes_below_threshold)]}")
-        
-        return sorted(nodes_below_threshold)
-    
-    def prune_graph(self, targets: List[str]):
-        """
-        修剪因果图，移除不显著的边
-        
-        Parameters:
-        -----------
-        targets : List[str]
-            要检验的目标节点列表
-        """
-        if self.causal_graph is None:
-            raise ValueError("请先构建因果图")
-        
-        for target in targets:
-            if target in self.causal_graph.nodes:
-                insignificant_parents = self.test_causal_minimality(target)
-                for parent in insignificant_parents:
-                    if self.causal_graph.has_edge(parent, target):
-                        self.causal_graph.remove_edge(parent, target)
-        
-        # 移除孤立节点
-        isolated_nodes = [node for node in self.causal_graph.nodes 
-                         if self.causal_graph.in_degree(node) + self.causal_graph.out_degree(node) == 0]
-        self.causal_graph.remove_nodes_from(isolated_nodes)
-        
-        if isolated_nodes:
-            print(f"移除孤立节点: {isolated_nodes}")
-    
     def fit_causal_model(self, quality: str = 'BETTER', invertible: bool = True):
-        """
-        拟合因果模型
-        
-        Parameters:
-        -----------
-        quality : str
-            模型质量 ('GOOD', 'BETTER', 'BEST')
-        invertible : bool
-            是否使用可逆模型（用于反事实分析）
-        """
+        """拟合因果模型"""
         if self.causal_graph is None:
             raise ValueError("请先构建因果图")
         
-        # 准备数据：处理分类变量
-        df_processed = self.df.copy()
-        categorical_cols = df_processed.select_dtypes(include=['object']).columns
-        
-        # 对于因果图中的分类变量，使用标签编码
-        for col in categorical_cols:
-            if col in self.causal_graph.nodes:
-                df_processed[col] = pd.Categorical(df_processed[col]).codes
+        print(f"\n拟合因果模型...")
+        print(f"  质量模式: {quality}")
+        print(f"  可逆模型: {invertible}")
         
         # 只保留因果图中的列
-        cols_in_graph = [col for col in df_processed.columns if col in self.causal_graph.nodes]
-        df_processed = df_processed[cols_in_graph]
+        cols_in_graph = [col for col in self.df.columns if col in self.causal_graph.nodes]
+        df_processed = self.df[cols_in_graph].copy()
         
         # 根据是否需要反事实分析选择模型类型
         if invertible:
             self.causal_model = gcm.InvertibleStructuralCausalModel(self.causal_graph)
-            print("使用可逆因果模型（支持反事实分析）")
+            print("  使用可逆因果模型（支持反事实分析）")
         else:
             self.causal_model = gcm.StructuralCausalModel(self.causal_graph)
-            print("使用标准因果模型")
+            print("  使用标准因果模型")
         
         quality_map = {
             'GOOD': gcm.auto.AssignmentQuality.GOOD,
@@ -301,14 +143,16 @@ class ConcreteAggregateCausalModel:
             'BEST': gcm.auto.AssignmentQuality.BEST
         }
         
-        print(gcm.auto.assign_causal_mechanisms(
+        print("\n  分配因果机制...")
+        gcm.auto.assign_causal_mechanisms(
             self.causal_model, 
             df_processed, 
             quality=quality_map.get(quality, gcm.auto.AssignmentQuality.BETTER)
-        ))
+        )
         
+        print("  拟合模型...")
         gcm.fit(self.causal_model, df_processed)
-        print("\n因果模型拟合完成!")
+        print("\n✓ 因果模型拟合完成!")
     
     def attribution_analysis(self,
                             df_old: pd.DataFrame,
@@ -318,51 +162,17 @@ class ConcreteAggregateCausalModel:
                             num_samples: int = 2000,
                             confidence_level: float = 0.90,
                             num_bootstrap_resamples: int = 4) -> Tuple[Dict, Dict]:
-        """
-        归因分析：找出KPI变化的根本原因
-        
-        Parameters:
-        -----------
-        df_old : pd.DataFrame
-            旧时期数据
-        df_new : pd.DataFrame
-            新时期数据
-        target_column : str
-            目标KPI
-        difference_func : Callable
-            差异估计函数
-        num_samples : int
-            采样数
-        confidence_level : float
-            置信水平
-        num_bootstrap_resamples : int
-            自助法重采样次数
-            
-        Returns:
-        --------
-        contributions, uncertainties : Tuple[Dict, Dict]
-            贡献和不确定性
-        """
+        """归因分析"""
         if self.causal_model is None:
             raise ValueError("请先拟合因果模型")
         
         if difference_func is None:
             difference_func = lambda x1, x2: np.mean(x2) - np.mean(x1)
         
-        # 处理分类变量
-        df_old_processed = df_old.copy()
-        df_new_processed = df_new.copy()
-        
-        categorical_cols = df_old_processed.select_dtypes(include=['object']).columns
-        for col in categorical_cols:
-            if col in self.causal_graph.nodes:
-                df_old_processed[col] = pd.Categorical(df_old_processed[col]).codes
-                df_new_processed[col] = pd.Categorical(df_new_processed[col]).codes
-        
         # 只保留因果图中的列
-        cols_in_graph = [col for col in df_old_processed.columns if col in self.causal_graph.nodes]
-        df_old_processed = df_old_processed[cols_in_graph]
-        df_new_processed = df_new_processed[cols_in_graph]
+        cols_in_graph = [col for col in df_old.columns if col in self.causal_graph.nodes]
+        df_old_processed = df_old[cols_in_graph]
+        df_new_processed = df_new[cols_in_graph]
         
         contributions, uncertainties = gcm.confidence_intervals(
             lambda: gcm.distribution_change(
@@ -390,29 +200,7 @@ class ConcreteAggregateCausalModel:
                              confidence_level: float = 0.95,
                              num_samples: int = 10000,
                              num_bootstrap_resamples: int = 40) -> pd.DataFrame:
-        """
-        干预分析：评估不同干预措施的效果
-        
-        Parameters:
-        -----------
-        target : str
-            目标KPI
-        step_size : float
-            干预步长
-        non_interveneable_nodes : List[str]
-            不可干预的节点
-        confidence_level : float
-            置信水平
-        num_samples : int
-            采样数
-        num_bootstrap_resamples : int
-            自助法重采样次数
-            
-        Returns:
-        --------
-        pd.DataFrame
-            干预效果结果
-        """
+        """干预分析"""
         if self.causal_model is None:
             raise ValueError("请先拟合因果模型")
         
@@ -424,10 +212,6 @@ class ConcreteAggregateCausalModel:
         
         for node in self.causal_graph.nodes:
             if node in non_interveneable_nodes or node == target:
-                continue
-            
-            # 跳过分类变量
-            if self.df[node].dtype == 'object':
                 continue
             
             # 定义干预
@@ -456,9 +240,8 @@ class ConcreteAggregateCausalModel:
                 causal_effects_ci[node] = effect[1].squeeze() if isinstance(effect[1], np.ndarray) else effect[1]
             
             except Exception as e:
-                print(f"警告: 节点 {node} 的干预分析失败: {e}")
-                causal_effects[node] = 0
-                causal_effects_ci[node] = [np.nan, np.nan]
+                print(f"  跳过 {node}: {str(e)[:80]}")
+                continue
         
         # 构建结果DataFrame
         result_df = pd.DataFrame({
@@ -470,7 +253,7 @@ class ConcreteAggregateCausalModel:
                         for k in causal_effects.keys()]
         })
         
-        result_df = result_df.sort_values('Causal_Effect', ascending=False)
+        result_df = result_df.sort_values('Causal_Effect', key=abs, ascending=False)
         
         return result_df
     
@@ -479,45 +262,20 @@ class ConcreteAggregateCausalModel:
                                 interventions: Dict[str, float],
                                 target: str,
                                 num_samples: int = 1000) -> Dict:
-        """
-        反事实分析：评估"如果做不同操作会怎样"
-        
-        Parameters:
-        -----------
-        observed_data : pd.DataFrame
-            观测数据
-        interventions : Dict[str, float]
-            干预变量及其目标值
-        target : str
-            目标变量
-        num_samples : int
-            采样数
-            
-        Returns:
-        --------
-        Dict
-            反事实分析结果
-        """
+        """反事实分析"""
         if self.causal_model is None:
             raise ValueError("请先拟合因果模型")
         
-        # 处理分类变量
-        observed_processed = observed_data.copy()
-        categorical_cols = observed_processed.select_dtypes(include=['object']).columns
-        for col in categorical_cols:
-            if col in self.causal_graph.nodes:
-                observed_processed[col] = pd.Categorical(observed_processed[col]).codes
-        
         # 只保留因果图中的列
-        cols_in_graph = [col for col in observed_processed.columns if col in self.causal_graph.nodes]
-        observed_processed = observed_processed[cols_in_graph]
+        cols_in_graph = [col for col in observed_data.columns if col in self.causal_graph.nodes]
+        observed_processed = observed_data[cols_in_graph]
         
         # 构建干预函数
         intervention_funcs = {}
         for var, value in interventions.items():
             intervention_funcs[var] = lambda x, v=value: v
         
-        # 执行反事实查询（修正参数名）
+        # 执行反事实查询
         counterfactual_samples_result = gcm.counterfactual_samples(
             self.causal_model,
             intervention_funcs,
@@ -535,80 +293,6 @@ class ConcreteAggregateCausalModel:
         return result
 
 
-def compare_metrics(df_new: pd.DataFrame, 
-                   df_old: pd.DataFrame, 
-                   metrics: List[str]) -> pd.DataFrame:
-    """
-    比较两个时期的指标变化
-    
-    Parameters:
-    -----------
-    df_new : pd.DataFrame
-        新时期数据
-    df_old : pd.DataFrame
-        旧时期数据
-    metrics : List[str]
-        要比较的指标列表
-        
-    Returns:
-    --------
-    pd.DataFrame
-        比较结果
-    """
-    comparison_data = []
-    
-    for metric in metrics:
-        try:
-            mean_old = df_old[metric].mean()
-            median_old = df_old[metric].median()
-            variance_old = df_old[metric].var()
-            
-            mean_new = df_new[metric].mean()
-            median_new = df_new[metric].median()
-            variance_new = df_new[metric].var()
-            
-            mean_change = ((mean_new - mean_old) / mean_old) * 100 if mean_old != 0 else None
-            median_change = ((median_new - median_old) / median_old) * 100 if median_old != 0 else None
-            variance_change = ((variance_new - variance_old) / variance_old) * 100 if variance_old != 0 else None
-            
-            comparison_data.append({
-                'Metric': metric,
-                'Mean_Change_%': mean_change,
-                'Median_Change_%': median_change,
-                'Variance_Change_%': variance_change
-            })
-        except KeyError as e:
-            print(f"指标 {metric} 未找到: {e}")
-    
-    return pd.DataFrame(comparison_data)
+# 为了兼容性，提供别名
+ConcreteAggregateCausalModel = ConcreteStrengthCausalModel
 
-
-def filter_significant_contributions(result_df: pd.DataFrame,
-                                     direction: str = 'positive',
-                                     lb_col: str = 'lb',
-                                     ub_col: str = 'ub') -> pd.DataFrame:
-    """
-    筛选显著的贡献
-    
-    Parameters:
-    -----------
-    result_df : pd.DataFrame
-        结果数据框
-    direction : str
-        方向 ('positive' 或 'negative')
-    lb_col : str
-        下界列名
-    ub_col : str
-        上界列名
-        
-    Returns:
-    --------
-    pd.DataFrame
-        显著结果
-    """
-    if direction == 'positive':
-        return result_df[(result_df[ub_col] > 0) & (result_df[lb_col] > 0)]
-    elif direction == 'negative':
-        return result_df[(result_df[ub_col] < 0) & (result_df[lb_col] < 0)]
-    else:
-        raise ValueError("direction 必须是 'positive' 或 'negative'")
