@@ -60,7 +60,7 @@
 
         .samples-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 15px;
             margin-top: 15px;
         }
@@ -72,6 +72,7 @@
             padding: 15px;
             cursor: pointer;
             transition: all 0.3s;
+            font-size: 0.85em;
         }
 
         .sample-card:hover {
@@ -191,6 +192,75 @@
 
         .loading.active {
             display: block;
+        }
+
+        /* 进度显示区域 */
+        .progress-section {
+            display: none;
+            margin: 20px 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .progress-section.active {
+            display: block;
+        }
+
+        .progress-section h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+
+        .progress-log {
+            max-height: 400px;
+            overflow-y: auto;
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
+            line-height: 1.6;
+        }
+
+        .progress-message {
+            padding: 8px 12px;
+            margin-bottom: 5px;
+            border-radius: 5px;
+            border-left: 3px solid #667eea;
+            background: #f8f9fa;
+            animation: fadeInSlide 0.3s ease-out;
+        }
+
+        .progress-message.start {
+            background: #e8f5e9;
+            border-left-color: #4caf50;
+            font-weight: bold;
+        }
+
+        .progress-message.end {
+            background: #e3f2fd;
+            border-left-color: #2196f3;
+            font-weight: bold;
+        }
+
+        .progress-message.error {
+            background: #ffebee;
+            border-left-color: #f44336;
+            color: #c62828;
+        }
+
+        @keyframes fadeInSlide {
+            from {
+                opacity: 0;
+                transform: translateX(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
         }
 
         .result-section {
@@ -621,6 +691,12 @@
 
                     <!-- 预测结果 -->
                     <div id="predictResult" class="predict-result">
+                        <!-- 快捷操作按钮 -->
+                        <div style="text-align: center; margin-bottom: 15px;">
+                            <button class="preset-btn" onclick="useCurrentConfigForAnalysis()" style="width: auto; padding: 10px 30px;">
+                                🔬 基于此配比进行反事实分析
+                            </button>
+                        </div>
                         <div class="strength-display">
                             <div class="label">预测抗压强度</div>
                             <div class="value" id="predictedStrength">--</div>
@@ -642,11 +718,61 @@
 
             <!-- 因果分析标签页 -->
             <div id="analysisTab" class="tab-content">
+            
+            <!-- 观测配比输入（用于反事实分析） -->
+            <div class="predictor-section" style="margin-bottom: 25px;">
+                <h3>📋 观测配比输入（反事实分析用）</h3>
+                <p style="color: #666; margin-bottom: 15px;">
+                    对于反事实分析，您可以：① 直接在下方输入观测配比 ② 使用预测页面的配比 ③ 选择参考批次
+                </p>
+
+                <!-- 简化的配比输入 -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 15px;">
+                    <div style="background: white; padding: 12px; border-radius: 8px;">
+                        <label style="font-weight: bold; color: #333; margin-bottom: 5px; display: block; font-size: 0.9em;">水泥 (kg/m³)</label>
+                        <input type="number" id="analysisCement" min="100" max="600" value="380" style="width: 100%; padding: 8px; border: 2px solid #e0e0e0; border-radius: 5px;">
+                    </div>
+                    <div style="background: white; padding: 12px; border-radius: 8px;">
+                        <label style="font-weight: bold; color: #333; margin-bottom: 5px; display: block; font-size: 0.9em;">矿渣 (kg/m³)</label>
+                        <input type="number" id="analysisSlag" min="0" max="400" value="100" style="width: 100%; padding: 8px; border: 2px solid #e0e0e0; border-radius: 5px;">
+                    </div>
+                    <div style="background: white; padding: 12px; border-radius: 8px;">
+                        <label style="font-weight: bold; color: #333; margin-bottom: 5px; display: block; font-size: 0.9em;">粉煤灰 (kg/m³)</label>
+                        <input type="number" id="analysisFlyash" min="0" max="250" value="50" style="width: 100%; padding: 8px; border: 2px solid #e0e0e0; border-radius: 5px;">
+                    </div>
+                    <div style="background: white; padding: 12px; border-radius: 8px;">
+                        <label style="font-weight: bold; color: #333; margin-bottom: 5px; display: block; font-size: 0.9em;">水 (kg/m³)</label>
+                        <input type="number" id="analysisWater" min="100" max="300" value="170" style="width: 100%; padding: 8px; border: 2px solid #e0e0e0; border-radius: 5px;">
+                    </div>
+                    <div style="background: white; padding: 12px; border-radius: 8px;">
+                        <label style="font-weight: bold; color: #333; margin-bottom: 5px; display: block; font-size: 0.9em;">减水剂 (kg/m³)</label>
+                        <input type="number" id="analysisSp" min="0" max="40" value="8" style="width: 100%; padding: 8px; border: 2px solid #e0e0e0; border-radius: 5px;">
+                    </div>
+                    <div style="background: white; padding: 12px; border-radius: 8px;">
+                        <label style="font-weight: bold; color: #333; margin-bottom: 5px; display: block; font-size: 0.9em;">粗骨料 (kg/m³)</label>
+                        <input type="number" id="analysisCoarse" min="700" max="1200" value="1000" style="width: 100%; padding: 8px; border: 2px solid #e0e0e0; border-radius: 5px;">
+                    </div>
+                    <div style="background: white; padding: 12px; border-radius: 8px;">
+                        <label style="font-weight: bold; color: #333; margin-bottom: 5px; display: block; font-size: 0.9em;">细骨料 (kg/m³)</label>
+                        <input type="number" id="analysisFine" min="500" max="1100" value="800" style="width: 100%; padding: 8px; border: 2px solid #e0e0e0; border-radius: 5px;">
+                    </div>
+                    <div style="background: white; padding: 12px; border-radius: 8px;">
+                        <label style="font-weight: bold; color: #333; margin-bottom: 5px; display: block; font-size: 0.9em;">龄期 (天)</label>
+                        <input type="number" id="analysisAge" min="1" max="365" value="28" style="width: 100%; padding: 8px; border: 2px solid #e0e0e0; border-radius: 5px;">
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; justify-content: center;">
+                    <button class="preset-btn" onclick="useAnalysisConfig()">✅ 使用此配比</button>
+                    <button class="preset-btn" onclick="clearAnalysisConfig()">🔄 清除配比</button>
+                </div>
+            </div>
+
             <!-- 参考批次选择 -->
             <div class="reference-section">
-                <h3>📦 选择参考批次（反事实分析需要）</h3>
+                <h3>📦 或选择参考批次</h3>
                 <p style="color: #666; margin-bottom: 15px;">
-                    归因分析和干预分析不需要选择批次，反事实分析建议选择一个参考批次
+                    如果不输入配比，也可以从历史数据中选择一个参考批次进行反事实分析
                 </p>
                 <div id="samplesGrid" class="samples-grid">
                     <div class="sample-card">加载中...</div>
@@ -661,11 +787,11 @@
                 <div class="examples">
                     <h4>💡 示例问题（点击快速填充）</h4>
                     <ul>
-                        <li onclick="fillQuery('为什么混凝土抗压强度下降了？')">📊 为什么混凝土抗压强度下降了？</li>
-                        <li onclick="fillQuery('如何提高混凝土强度？')">🔧 如何提高混凝土强度？</li>
+                        <li onclick="fillQuery('如果我想强度提升10%，应该如何调整配合比？')">🎯 如果我想强度提升10%，应该如何调整配合比？</li>
                         <li onclick="fillQuery('如果水用量从200降到150 kg/m³，强度会提升多少？')">🔮 如果水用量从200降到150，强度会提升多少？</li>
                         <li onclick="fillQuery('增加水泥用量50 kg/m³，强度能提升多少？')">📈 增加水泥用量50 kg/m³，强度能提升多少？</li>
-                        <li onclick="fillQuery('添加矿渣100 kg/m³会怎样？')">🏭 添加矿渣100 kg/m³会怎样？</li>
+                        <li onclick="fillQuery('添加矿渣100 kg/m³，减少水泥50 kg/m³，强度会怎样？')">🏭 添加矿渣100 kg/m³，减少水泥50 kg/m³，强度会怎样？</li>
+                        <li onclick="fillQuery('龄期从28天延长到56天，强度能提升多少？')">⏰ 龄期从28天延长到56天，强度能提升多少？</li>
                     </ul>
                 </div>
 
@@ -682,6 +808,12 @@
             <div id="loading" class="loading">
                 <p>⏳ 分析中，请稍候...</p>
                 <p style="font-size: 0.9em; margin-top: 10px;">这可能需要5-30秒</p>
+            </div>
+
+            <!-- 进度显示 -->
+            <div id="progressSection" class="progress-section">
+                <h3>📡 实时分析进度</h3>
+                <div id="progressLog" class="progress-log"></div>
             </div>
 
             <!-- 结果展示 -->
@@ -705,6 +837,16 @@
                     <p id="analysisSummary">-</p>
                 </div>
 
+                <div id="optimizedConfigSection" class="result-item" style="display: none; background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%); border-left: 5px solid #4caf50;">
+                    <h4>🎯 优化配比方案</h4>
+                    <div style="background: white; padding: 15px; border-radius: 8px; margin-top: 10px;">
+                        <p style="font-weight: bold; color: #2e7d32; margin-bottom: 10px;">
+                            预测强度: <span id="optimizedStrength" style="font-size: 1.5em;">--</span> MPa
+                        </p>
+                        <pre id="optimizationSummary" style="background: #f5f5f5; padding: 10px; border-radius: 5px; white-space: pre-line;">-</pre>
+                    </div>
+                </div>
+
                 <div class="result-item">
                     <h4>💡 决策建议</h4>
                     <pre id="recommendations">-</pre>
@@ -720,6 +862,7 @@
 
     <script>
         let selectedSampleIndex = null;
+        let currentObservedConfig = null;  // 存储当前配比
         const API_BASE = 'http://localhost:8000';
 
         // 页面加载时获取参考批次
@@ -744,6 +887,8 @@
             } else if (tabName === 'analysis') {
                 document.querySelector('.tab:last-child').classList.add('active');
                 document.getElementById('analysisTab').classList.add('active');
+                // 切换到分析页面时，同步配比数据
+                syncConfigToAnalysis();
             }
         }
 
@@ -859,6 +1004,78 @@
             chartDiv.style.display = 'block';
         }
 
+        // 使用分析页面输入的配比
+        function useAnalysisConfig() {
+            currentObservedConfig = {
+                cement: parseFloat(document.getElementById('analysisCement').value),
+                blast_furnace_slag: parseFloat(document.getElementById('analysisSlag').value),
+                fly_ash: parseFloat(document.getElementById('analysisFlyash').value),
+                water: parseFloat(document.getElementById('analysisWater').value),
+                superplasticizer: parseFloat(document.getElementById('analysisSp').value),
+                coarse_aggregate: parseFloat(document.getElementById('analysisCoarse').value),
+                fine_aggregate: parseFloat(document.getElementById('analysisFine').value),
+                age: parseInt(document.getElementById('analysisAge').value)
+            };
+            
+            // 清除参考批次选择
+            selectedSampleIndex = null;
+            document.querySelectorAll('.sample-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            
+            alert('✅ 已设置观测配比，现在可以进行反事实分析了！');
+            
+            // 滚动到问题输入区域
+            document.getElementById('queryInput').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // 清除分析页面的配比
+        function clearAnalysisConfig() {
+            currentObservedConfig = null;
+            alert('已清除观测配比，可以选择参考批次或重新输入');
+        }
+
+        // 同步预测页面的配比到分析页面
+        function syncConfigToAnalysis() {
+            if (currentObservedConfig) {
+                document.getElementById('analysisCement').value = currentObservedConfig.cement;
+                document.getElementById('analysisSlag').value = currentObservedConfig.blast_furnace_slag;
+                document.getElementById('analysisFlyash').value = currentObservedConfig.fly_ash;
+                document.getElementById('analysisWater').value = currentObservedConfig.water;
+                document.getElementById('analysisSp').value = currentObservedConfig.superplasticizer;
+                document.getElementById('analysisCoarse').value = currentObservedConfig.coarse_aggregate;
+                document.getElementById('analysisFine').value = currentObservedConfig.fine_aggregate;
+                document.getElementById('analysisAge').value = currentObservedConfig.age;
+            }
+        }
+
+        // 使用当前配比进行反事实分析
+        function useCurrentConfigForAnalysis() {
+            if (!currentObservedConfig) {
+                alert('请先进行一次强度预测');
+                return;
+            }
+            
+            // 切换到分析标签页（会自动同步配比）
+            switchTab('analysis');
+            
+            // 填充示例问题
+            const water = currentObservedConfig.water;
+            const newWater = Math.max(100, water - 20);
+            document.getElementById('queryInput').value = 
+                `如果水用量从${water}降到${newWater} kg/m³，强度会提升多少？`;
+            
+            // 高亮提示
+            setTimeout(() => {
+                alert('✅ 已同步预测页面的配比，您可以直接提问或修改配比参数');
+            }, 300);
+            
+            // 滚动到查询区域
+            setTimeout(() => {
+                document.getElementById('queryInput').scrollIntoView({ behavior: 'smooth' });
+            }, 500);
+        }
+
         // 预测强度
         async function predictStrength() {
             const params = {
@@ -871,6 +1088,9 @@
                 fine_aggregate: parseFloat(document.getElementById('fineValue').value),
                 age: parseInt(document.getElementById('ageValue').value)
             };
+            
+            // 保存当前配比（用于反事实分析）
+            currentObservedConfig = params;
 
             // 显示加载状态
             const btn = document.querySelector('#predictorTab .btn');
@@ -936,12 +1156,21 @@
                     card.onclick = () => selectSample(sample.index, card);
                     
                     card.innerHTML = `
-                        <h4>${categoryNames[sample.category]}</h4>
-                        <div class="param">水泥: ${sample.cement.toFixed(0)} kg/m³</div>
-                        <div class="param">矿渣: ${sample.blast_furnace_slag.toFixed(0)} kg/m³</div>
-                        <div class="param">水: ${sample.water.toFixed(0)} kg/m³</div>
-                        <div class="param">龄期: ${sample.age} 天</div>
-                        <div class="strength">强度: ${sample.concrete_compressive_strength.toFixed(1)} MPa</div>
+                        <h4 style="margin-bottom: 8px;">${categoryNames[sample.category]}</h4>
+                        <div style="font-size: 0.9em; color: #666; margin-bottom: 8px;">批次索引: #${sample.index}</div>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 8px;">
+                            <div class="param">水泥: ${sample.cement.toFixed(0)}</div>
+                            <div class="param">矿渣: ${sample.blast_furnace_slag.toFixed(0)}</div>
+                            <div class="param">粉煤灰: ${sample.fly_ash.toFixed(0)}</div>
+                            <div class="param">水: ${sample.water.toFixed(0)}</div>
+                            <div class="param">减水剂: ${sample.superplasticizer.toFixed(1)}</div>
+                            <div class="param">粗骨料: ${sample.coarse_aggregate.toFixed(0)}</div>
+                            <div class="param">细骨料: ${sample.fine_aggregate.toFixed(0)}</div>
+                            <div class="param">龄期: ${sample.age}天</div>
+                        </div>
+                        <div class="strength" style="text-align: center; padding-top: 8px; border-top: 1px solid #e0e0e0;">
+                            强度: ${sample.concrete_compressive_strength.toFixed(1)} MPa
+                        </div>
                     `;
                     samplesGrid.appendChild(card);
                 });
@@ -971,7 +1200,7 @@
             document.getElementById('queryInput').value = query;
         }
 
-        // 执行分析
+        // 执行分析（流式版本）
         async function analyzeQuery() {
             const query = document.getElementById('queryInput').value.trim();
             
@@ -980,21 +1209,27 @@
                 return;
             }
 
-            // 显示加载状态
+            // 显示加载状态和进度区域
             document.getElementById('loading').classList.add('active');
+            document.getElementById('progressSection').classList.add('active');
             document.getElementById('resultSection').classList.remove('active');
+            const progressLog = document.getElementById('progressLog');
+            progressLog.innerHTML = '';
+            
             const analyzeBtn = document.querySelector('#analysisTab .btn');
             analyzeBtn.disabled = true;
 
             try {
                 const payload = {
                     query: query,
-                    reference_sample_index: selectedSampleIndex
+                    reference_sample_index: selectedSampleIndex,
+                    observed_config: currentObservedConfig
                 };
 
-                console.log('发送请求:', payload);
+                console.log('发送流式请求:', payload);
 
-                const response = await fetch(`${API_BASE}/api/analyze`, {
+                // 使用fetch发送POST请求，然后读取流式响应
+                const response = await fetch(`${API_BASE}/api/analyze_stream`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1002,20 +1237,75 @@
                     body: JSON.stringify(payload)
                 });
 
-                const data = await response.json();
-                console.log('收到响应:', data);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
 
-                // 显示结果
-                displayResults(data);
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let finalData = null;
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    
+                    // 处理SSE格式的数据
+                    const lines = buffer.split('\n\n');
+                    buffer = lines.pop(); // 保留不完整的行
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const jsonData = JSON.parse(line.substring(6));
+                                
+                                if (jsonData.type === 'start') {
+                                    addProgressMessage('🚀 ' + jsonData.message, 'start');
+                                } else if (jsonData.type === 'progress') {
+                                    addProgressMessage(jsonData.message, 'progress');
+                                } else if (jsonData.type === 'result') {
+                                    finalData = jsonData.data;
+                                } else if (jsonData.type === 'end') {
+                                    addProgressMessage('✅ ' + jsonData.message, 'end');
+                                } else if (jsonData.type === 'error') {
+                                    addProgressMessage('❌ ' + jsonData.message, 'error');
+                                }
+                            } catch (e) {
+                                console.warn('解析SSE消息失败:', e, line);
+                            }
+                        }
+                    }
+                }
+
+                // 显示最终结果
+                if (finalData) {
+                    displayResults(finalData);
+                } else {
+                    alert('未收到分析结果');
+                }
 
             } catch (error) {
                 console.error('分析失败:', error);
-                alert('分析失败：' + error.message);
+                addProgressMessage('❌ 分析失败: ' + error.message, 'error');
             } finally {
                 document.getElementById('loading').classList.remove('active');
-                const analyzeBtn = document.querySelector('#analysisTab .btn');
                 analyzeBtn.disabled = false;
             }
+        }
+        
+        // 添加进度消息
+        function addProgressMessage(message, type = 'progress') {
+            const progressLog = document.getElementById('progressLog');
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `progress-message ${type}`;
+            msgDiv.textContent = message;
+            progressLog.appendChild(msgDiv);
+            
+            // 自动滚动到底部
+            progressLog.scrollTop = progressLog.scrollHeight;
         }
 
         // 显示结果
@@ -1036,6 +1326,15 @@
             document.getElementById('recommendations').textContent = data.recommendations;
             document.getElementById('detailedResults').textContent = 
                 JSON.stringify(data.causal_results, null, 2);
+
+            // 显示优化配比（如果有）
+            if (data.optimized_config && data.predicted_strength) {
+                document.getElementById('optimizedStrength').textContent = data.predicted_strength.toFixed(2);
+                document.getElementById('optimizationSummary').textContent = data.optimization_summary || '';
+                document.getElementById('optimizedConfigSection').style.display = 'block';
+            } else {
+                document.getElementById('optimizedConfigSection').style.display = 'none';
+            }
 
             document.getElementById('resultSection').classList.add('active');
             

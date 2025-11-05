@@ -10,7 +10,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List
 from pathlib import Path
@@ -18,6 +18,9 @@ import pandas as pd
 import numpy as np
 import warnings
 from dotenv import load_dotenv
+import json
+import asyncio
+from io import StringIO
 
 warnings.filterwarnings('ignore')
 
@@ -94,16 +97,38 @@ if static_dir.exists():
 # 数据模型
 # ============================================================================
 
+class ObservedConfig(BaseModel):
+    """观测配比数据（用于反事实分析）"""
+    cement: float
+    blast_furnace_slag: float = 0
+    fly_ash: float = 0
+    water: float
+    superplasticizer: float = 0
+    coarse_aggregate: float
+    fine_aggregate: float
+    age: int = 28
+
+
 class QueryRequest(BaseModel):
     """查询请求"""
     query: str = Field(..., description="用户自然语言查询")
-    reference_sample_index: Optional[int] = Field(None, description="参考批次索引（反事实分析需要）")
+    reference_sample_index: Optional[int] = Field(None, description="参考批次索引（反事实分析可选）")
+    observed_config: Optional[ObservedConfig] = Field(None, description="观测配比数据（反事实分析可选，优先于reference_sample_index）")
     
     class Config:
         json_schema_extra = {
             "example": {
-                "query": "如果水胶比从0.48降到0.43，28天强度会提升多少？",
-                "reference_sample_index": 100
+                "query": "如果水用量从200降到150，强度会提升多少？",
+                "observed_config": {
+                    "cement": 380,
+                    "blast_furnace_slag": 100,
+                    "fly_ash": 50,
+                    "water": 200,
+                    "superplasticizer": 8,
+                    "coarse_aggregate": 1000,
+                    "fine_aggregate": 800,
+                    "age": 28
+                }
             }
         }
 
@@ -116,6 +141,9 @@ class AnalysisResponse(BaseModel):
     routing_reasoning: str
     causal_results: Dict
     analysis_summary: str
+    optimized_config: Optional[Dict] = None  # 优化后的配比
+    predicted_strength: Optional[float] = None  # 预测强度
+    optimization_summary: Optional[str] = None  # 优化摘要
     recommendations: str
     error: Optional[str] = None
 
@@ -307,10 +335,30 @@ async def get_reference_samples():
         raise HTTPException(status_code=500, detail=f"获取样本失败: {str(e)}")
 
 
+class OutputCapture:
+    """捕获标准输出的辅助类"""
+    def __init__(self):
+        self.output = []
+        self.original_stdout = None
+        
+    def write(self, text):
+        if text.strip():
+            self.output.append(text)
+        if self.original_stdout:
+            self.original_stdout.write(text)
+            
+    def flush(self):
+        if self.original_stdout:
+            self.original_stdout.flush()
+    
+    def get_output(self):
+        return ''.join(self.output)
+
+
 @app.post("/api/analyze", response_model=AnalysisResponse)
 async def analyze_query(request: QueryRequest):
     """
-    执行因果分析
+    执行因果分析（传统方式，返回完整结果）
     
     - **query**: 用户自然语言查询
     - **reference_sample_index**: 参考批次索引（可选，反事实分析建议提供）
@@ -318,20 +366,32 @@ async def analyze_query(request: QueryRequest):
     返回分析结果和决策建议
     """
     try:
-        print(f"\n{'='*80}")
-        print(f"📥 收到查询: {request.query}")
+        print(f"\n📥 收到查询: {request.query}")
         if request.reference_sample_index is not None:
             print(f"📍 参考批次: #{request.reference_sample_index}")
-        print(f"{'='*80}\n")
         
         # 构建状态
         state_input = {
             "user_query": request.query
         }
         
-        # 如果提供了参考批次，添加到状态中
-        if request.reference_sample_index is not None:
+        # 如果提供了观测配比数据，添加到状态中（优先）
+        if request.observed_config is not None:
+            state_input["observed_config"] = {
+                "cement": request.observed_config.cement,
+                "blast_furnace_slag": request.observed_config.blast_furnace_slag,
+                "fly_ash": request.observed_config.fly_ash,
+                "water": request.observed_config.water,
+                "superplasticizer": request.observed_config.superplasticizer,
+                "coarse_aggregate": request.observed_config.coarse_aggregate,
+                "fine_aggregate": request.observed_config.fine_aggregate,
+                "age": request.observed_config.age
+            }
+            print(f"📋 使用用户输入的观测配比")
+        # 否则，如果提供了参考批次，添加到状态中
+        elif request.reference_sample_index is not None:
             state_input["reference_sample_index"] = request.reference_sample_index
+            print(f"📍 使用参考批次索引: {request.reference_sample_index}")
         
         # 执行分析
         result = agent_graph.invoke(state_input)
@@ -344,6 +404,9 @@ async def analyze_query(request: QueryRequest):
             routing_reasoning=result.get('routing_reasoning', ''),
             causal_results=result.get('causal_results', {}),
             analysis_summary=result.get('analysis_summary', ''),
+            optimized_config=result.get('optimized_config'),
+            predicted_strength=result.get('predicted_strength'),
+            optimization_summary=result.get('optimization_summary'),
             recommendations=result.get('recommendations', ''),
             error=result.get('error')
         )
@@ -355,6 +418,113 @@ async def analyze_query(request: QueryRequest):
     except Exception as e:
         print(f"\n❌ 分析失败: {str(e)}\n")
         raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
+
+
+@app.post("/api/analyze_stream")
+async def analyze_query_stream(request: QueryRequest):
+    """
+    执行因果分析（流式响应，实时推送进度）
+    
+    使用Server-Sent Events (SSE)推送分析过程
+    """
+    async def event_generator():
+        try:
+            # 捕获输出
+            output_capture = OutputCapture()
+            original_stdout = sys.stdout
+            sys.stdout = output_capture
+            output_capture.original_stdout = original_stdout
+            
+            # 发送开始消息
+            yield f"data: {json.dumps({'type': 'start', 'message': '开始分析...'}, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0.1)
+            
+            # 构建状态
+            state_input = {"user_query": request.query}
+            
+            if request.observed_config is not None:
+                state_input["observed_config"] = {
+                    "cement": request.observed_config.cement,
+                    "blast_furnace_slag": request.observed_config.blast_furnace_slag,
+                    "fly_ash": request.observed_config.fly_ash,
+                    "water": request.observed_config.water,
+                    "superplasticizer": request.observed_config.superplasticizer,
+                    "coarse_aggregate": request.observed_config.coarse_aggregate,
+                    "fine_aggregate": request.observed_config.fine_aggregate,
+                    "age": request.observed_config.age
+                }
+                yield f"data: {json.dumps({'type': 'progress', 'message': '📋 使用用户输入的观测配比'}, ensure_ascii=False)}\n\n"
+            elif request.reference_sample_index is not None:
+                state_input["reference_sample_index"] = request.reference_sample_index
+                yield f"data: {json.dumps({'type': 'progress', 'message': f'📍 使用参考批次 #{request.reference_sample_index}'}, ensure_ascii=False)}\n\n"
+            
+            await asyncio.sleep(0.1)
+            
+            # 执行分析（在单独的线程中）
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(agent_graph.invoke, state_input)
+                
+                # 定期检查输出
+                last_output_len = 0
+                while not future.done():
+                    current_output = output_capture.get_output()
+                    if len(current_output) > last_output_len:
+                        new_content = current_output[last_output_len:]
+                        # 按行发送
+                        for line in new_content.split('\n'):
+                            if line.strip():
+                                yield f"data: {json.dumps({'type': 'progress', 'message': line}, ensure_ascii=False)}\n\n"
+                        last_output_len = len(current_output)
+                    await asyncio.sleep(0.2)
+                
+                # 获取结果
+                result = future.result()
+            
+            # 恢复stdout
+            sys.stdout = original_stdout
+            
+            # 发送最后的输出
+            final_output = output_capture.get_output()
+            if len(final_output) > last_output_len:
+                new_content = final_output[last_output_len:]
+                for line in new_content.split('\n'):
+                    if line.strip():
+                        yield f"data: {json.dumps({'type': 'progress', 'message': line}, ensure_ascii=False)}\n\n"
+            
+            # 构建响应
+            response_data = {
+                "success": True,
+                "analysis_type": result.get('analysis_type', 'unknown'),
+                "target_variable": result.get('target_variable', ''),
+                "routing_reasoning": result.get('routing_reasoning', ''),
+                "causal_results": result.get('causal_results', {}),
+                "analysis_summary": result.get('analysis_summary', ''),
+                "optimized_config": result.get('optimized_config'),
+                "predicted_strength": result.get('predicted_strength'),
+                "optimization_summary": result.get('optimization_summary'),
+                "recommendations": result.get('recommendations', ''),
+                "error": result.get('error')
+            }
+            
+            # 发送完整结果
+            yield f"data: {json.dumps({'type': 'result', 'data': response_data}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'end', 'message': '分析完成'}, ensure_ascii=False)}\n\n"
+            
+        except Exception as e:
+            sys.stdout = original_stdout
+            error_msg = f"分析失败: {str(e)}"
+            yield f"data: {json.dumps({'type': 'error', 'message': error_msg}, ensure_ascii=False)}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @app.get("/api/variables")

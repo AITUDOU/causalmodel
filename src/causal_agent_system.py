@@ -40,17 +40,24 @@ class CausalAnalysisState(TypedDict):
     """因果分析智能体系统的共享状态"""
     # 用户输入
     user_query: str                    # 原始查询
-    reference_sample_index: int        # 参考批次索引（用于反事实分析）
+    reference_sample_index: int        # 参考批次索引（用于反事实分析，可选）
+    observed_config: dict              # 用户输入的观测配比（用于反事实分析，可选，优先于reference_sample_index）
     
     # Router 输出
     analysis_type: str                 # 'attribution' | 'intervention' | 'counterfactual'
     target_variable: str               # 目标变量
     intervention_params: dict          # 干预参数
     routing_reasoning: str             # 路由推理过程
+    target_improvement: float          # 目标提升幅度（百分比，如10表示提升10%）
     
     # Causal Analyst 输出
     causal_results: dict               # 因果分析数值结果
     analysis_summary: str              # 分析摘要
+    
+    # Optimizer 输出（新增）
+    optimized_config: dict             # 优化后的配比建议
+    predicted_strength: float          # 预测的强度
+    optimization_summary: str          # 优化摘要
     
     # Advisor 输出
     recommendations: str               # 决策建议
@@ -254,6 +261,42 @@ def intervention_analysis_tool(
 
 
 @tool
+def math_calculator_tool(
+    variable: str,
+    base_value: float,
+    operation: str,
+    operand: float
+) -> float:
+    """
+    数学计算工具，处理变量的加减乘除运算
+    
+    Args:
+        variable: 变量名称
+        base_value: 基准值
+        operation: 运算类型 ('add'/'subtract'/'multiply'/'divide')
+        operand: 操作数
+        
+    Returns:
+        float: 计算结果
+    """
+    if operation == 'add':
+        result = base_value + operand
+    elif operation == 'subtract':
+        result = base_value - operand
+    elif operation == 'multiply':
+        result = base_value * operand
+    elif operation == 'divide':
+        if operand == 0:
+            raise ValueError(f"除数不能为0")
+        result = base_value / operand
+    else:
+        raise ValueError(f"不支持的运算类型: {operation}")
+    
+    print(f"  🧮 计算: {variable} = {base_value} {operation} {operand} = {result}")
+    return result
+
+
+@tool
 def counterfactual_analysis_tool(
     sample_index: int,
     interventions: dict,
@@ -338,9 +381,7 @@ def router_agent(state: CausalAnalysisState) -> dict:
     2. 识别查询类型（归因/干预/反事实）
     3. 提取关键信息（目标变量、干预参数等）
     """
-    print("\n" + "="*80)
-    print("🔍 Router Agent 正在分析您的问题...")
-    print("="*80)
+    print("\n🔍 Router Agent 正在分析您的问题...")
     
     # 使用 LLM 理解用户查询
     llm = ChatOpenAI(
@@ -397,24 +438,55 @@ def router_agent(state: CausalAnalysisState) -> dict:
     "analysis_type": "attribution/intervention/counterfactual",
     "target_variable": "从上述变量列表中选择（必须是准确的变量名）",
     "reasoning": "你的推理过程（1-2句话）",
+    "target_improvement": 目标提升百分比（如用户说"提升10%"则为10，如果没有明确提及则为null）,
     "extracted_info": {{
         // 如果是反事实分析：
-        // 单变量干预：
+        // 情况A - 绝对值干预（明确给出新值）：
         "intervention_variable": "变量名",
         "original_value": 原始数值,
         "intervention_value": 新数值
-        // 或者多变量干预：
+        
+        // 情况B - 单变量数学运算：
+        "intervention_variable": "变量名",
+        "operation": "add/subtract/multiply/divide",
+        "operand": 数值
+        
+        // 情况C - 多变量数学运算：
+        "interventions": [
+            {{"variable": "cement", "operation": "subtract", "operand": 50}},
+            {{"variable": "blast_furnace_slag", "operation": "add", "operand": 100}}
+        ]
+        
+        // 情况D - 多变量绝对值：
         "intervention_variable": {{"water": 150, "cement": 300}}
     }}
 }}
 
-示例1（单变量）：
+示例1（绝对值）：
 用户问："如果水用量从200降到150，强度会怎样？"
 回复：{{"intervention_variable": "water", "original_value": 200, "intervention_value": 150}}
 
-示例2（多变量）：
+示例2（单变量运算）：
+用户问："如果水泥增加50 kg/m³，强度会怎样？"
+回复：{{"intervention_variable": "cement", "operation": "add", "operand": 50}}
+
+示例3（多变量运算）：
+用户问："添加矿渣100 kg/m³，减少水泥50 kg/m³，强度会怎样？"
+回复：{{"interventions": [{{"variable": "blast_furnace_slag", "operation": "add", "operand": 100}}, {{"variable": "cement", "operation": "subtract", "operand": 50}}]}}
+
+示例4（多变量绝对值）：
 用户问："如果水泥300、水180、龄期28天，强度是多少？"
 回复：{{"intervention_variable": {{"cement": 300, "water": 180, "age": 28}}}}
+
+示例5（目标导向）：
+用户问："如果我想强度提升10%，应该如何调整配合比？"
+回复：{{"analysis_type": "intervention", "target_improvement": 10}}
+
+【关键】运算类型映射：
+- "增加"/"添加"/"加" → "add"
+- "减少"/"降低"/"减" → "subtract"
+- "乘以"/"翻倍" → "multiply"
+- "除以"/"减半" → "divide"
 """
     
     response = llm.invoke(prompt)
@@ -434,12 +506,15 @@ def router_agent(state: CausalAnalysisState) -> dict:
         print(f"\n📋 分析类型: {parsed['analysis_type']}")
         print(f"🎯 目标变量: {parsed['target_variable']}")
         print(f"💡 推理: {parsed['reasoning']}")
+        if parsed.get('target_improvement'):
+            print(f"🎯 目标提升: {parsed['target_improvement']}%")
         
         return {
             "analysis_type": parsed['analysis_type'],
             "target_variable": parsed['target_variable'],
             "routing_reasoning": parsed['reasoning'],
-            "intervention_params": parsed.get('extracted_info', {})
+            "intervention_params": parsed.get('extracted_info', {}),
+            "target_improvement": parsed.get('target_improvement')
         }
         
     except Exception as e:
@@ -461,9 +536,7 @@ def causal_analyst_agent(state: CausalAnalysisState) -> dict:
     1. 根据 Router 的指示调用对应的因果分析工具
     2. 执行计算并返回定量结果
     """
-    print("\n" + "="*80)
-    print("📊 Causal Analyst Agent 正在执行因果分析...")
-    print("="*80)
+    print("\n📊 Causal Analyst Agent 正在执行因果分析...")
     
     analysis_type = state['analysis_type']
     target_variable = state['target_variable']
@@ -492,55 +565,165 @@ def causal_analyst_agent(state: CausalAnalysisState) -> dict:
             params = state.get('intervention_params', {})
             
             # 从 Router 提取的参数中获取干预信息
-            # 支持单个或多个变量的干预
             intervention_variable = params.get('intervention_variable')
             intervention_value = params.get('intervention_value')
             original_value = params.get('original_value')
+            operation = params.get('operation')  # 新增：数学运算
+            operand = params.get('operand')  # 新增：操作数
+            interventions_list = params.get('interventions')  # 新增：多变量运算列表
+            
+            # 获取基准配比
+            def get_base_config():
+                if state.get('observed_config') is not None:
+                    return state['observed_config']
+                elif state.get('reference_sample_index') is not None:
+                    idx = state['reference_sample_index']
+                    return _causal_model_instance.df.iloc[idx].to_dict()
+                else:
+                    # 使用数据集中位数样本
+                    df = _causal_model_instance.df
+                    median_idx = (df['concrete_compressive_strength'] - df['concrete_compressive_strength'].median()).abs().idxmin()
+                    return df.iloc[median_idx].to_dict()
+            
+            base_config = get_base_config()
             
             # 构建干预字典
             interventions = {}
             
-            # 情况1：提取到单个变量的干预
-            if isinstance(intervention_variable, str) and intervention_value is not None:
-                interventions[intervention_variable] = intervention_value
+            # 情况1：多变量数学运算（最常见的复杂情况）
+            if interventions_list is not None and isinstance(interventions_list, list):
+                print(f"\n  🧮 使用数学计算工具处理多变量运算:")
+                for item in interventions_list:
+                    var = item.get('variable')
+                    op = item.get('operation')
+                    val = item.get('operand')
+                    
+                    if var and op and val is not None:
+                        base_val = float(base_config.get(var, 0))
+                        # 使用数学计算工具
+                        new_val = math_calculator_tool.invoke({
+                            'variable': var,
+                            'base_value': base_val,
+                            'operation': op,
+                            'operand': val
+                        })
+                        interventions[var] = new_val
             
-            # 情况2：提取到多个变量的干预（Router可能提取为字典）
+            # 情况2：单变量数学运算
+            elif isinstance(intervention_variable, str) and operation is not None and operand is not None:
+                print(f"\n  🧮 使用数学计算工具处理单变量运算:")
+                base_value = float(base_config.get(intervention_variable, 0))
+                new_value = math_calculator_tool.invoke({
+                    'variable': intervention_variable,
+                    'base_value': base_value,
+                    'operation': operation,
+                    'operand': operand
+                })
+                interventions[intervention_variable] = new_value
+                original_value = base_value
+            
+            # 情况3：单个变量的绝对值干预
+            elif isinstance(intervention_variable, str) and intervention_value is not None:
+                interventions[intervention_variable] = intervention_value
+                print(f"  📊 绝对值干预: {intervention_variable} = {intervention_value}")
+            
+            # 情况4：多变量绝对值干预（字典形式）
             elif isinstance(intervention_variable, dict):
                 interventions = intervention_variable
+                print(f"  📊 多变量绝对值干预: {interventions}")
             elif isinstance(intervention_value, dict):
                 interventions = intervention_value
+                print(f"  📊 多变量绝对值干预: {interventions}")
             
-            # 情况3：没有提取到干预信息，使用默认
+            # 情况5：没有提取到干预信息，使用默认
             if not interventions:
                 interventions = {'water': 150}  # 默认降低用水量
                 print(f"  ⚠️  未提取到干预信息，使用默认干预: {interventions}")
             
-            # 选择合适的样本进行分析
-            # 优先使用用户选择的参考批次
-            if state.get('reference_sample_index') is not None:
-                sample_index = state['reference_sample_index']
-                print(f"  使用用户选择的参考批次: 索引 {sample_index}")
-            # 如果提取到了原始值，尝试找到接近该值的样本
-            elif original_value is not None and _causal_model_instance is not None:
-                df = _causal_model_instance.df
-                # 使用第一个干预变量找到最接近的样本
-                first_var = list(interventions.keys())[0]
-                if first_var in df.columns:
-                    closest_idx = (df[first_var] - original_value).abs().idxmin()
-                    sample_index = int(closest_idx)
-                    print(f"  找到最接近原始值 {original_value} 的样本: 索引 {sample_index}")
+            # 选择观测数据的来源
+            # 优先级: observed_config > reference_sample_index > 自动匹配 > 默认样本
+            
+            if state.get('observed_config') is not None:
+                # 用户直接输入了观测配比
+                print(f"  ✅ 使用用户输入的观测配比")
+                
+                # 如果observed_config中缺少concrete_compressive_strength，先用因果模型预测
+                observed_config_full = state['observed_config'].copy()
+                if 'concrete_compressive_strength' not in observed_config_full:
+                    print(f"  🔮 预测基准强度...")
+                    from dowhy import gcm
+                    
+                    # 使用因果模型预测基准强度
+                    intervention_funcs = {
+                        'cement': lambda x: observed_config_full.get('cement', 280),
+                        'blast_furnace_slag': lambda x: observed_config_full.get('blast_furnace_slag', 0),
+                        'fly_ash': lambda x: observed_config_full.get('fly_ash', 0),
+                        'water': lambda x: observed_config_full.get('water', 180),
+                        'superplasticizer': lambda x: observed_config_full.get('superplasticizer', 0),
+                        'coarse_aggregate': lambda x: observed_config_full.get('coarse_aggregate', 1000),
+                        'fine_aggregate': lambda x: observed_config_full.get('fine_aggregate', 800),
+                        'age': lambda x: observed_config_full.get('age', 28)
+                    }
+                    samples = gcm.interventional_samples(
+                        _causal_model_instance.causal_model,
+                        intervention_funcs,
+                        num_samples_to_draw=100
+                    )
+                    predicted_strength = float(samples['concrete_compressive_strength'].mean())
+                    observed_config_full['concrete_compressive_strength'] = predicted_strength
+                    print(f"  ✓ 基准强度: {predicted_strength:.2f} MPa")
+                
+                observed_data_df = pd.DataFrame([observed_config_full])
+                
+                # 直接使用counterfactual_analysis
+                result_dict = _causal_model_instance.counterfactual_analysis(
+                    observed_data=observed_data_df,
+                    interventions=interventions,
+                    target=target_variable,
+                    num_samples=1000
+                )
+                
+                # 构建结果
+                result = {
+                    "type": "counterfactual",
+                    "sample_index": "用户输入",
+                    "target": target_variable,
+                    "interventions": [{
+                        "variable": var,
+                        "original_value": float(observed_config_full.get(var, 0)),
+                        "new_value": float(new_val)
+                    } for var, new_val in interventions.items()],
+                    "observed_mean": float(result_dict['observed_mean']),
+                    "counterfactual_mean": float(result_dict['counterfactual_mean']),
+                    "causal_effect": float(result_dict['causal_effect'])
+                }
+                
             else:
-                sample_index = 100  # 默认样本
-                print(f"  使用默认样本索引: {sample_index}")
-            
-            print(f"  干预变量: {', '.join(interventions.keys())}")
-            print(f"  干预值: {interventions}")
-            
-            result = counterfactual_analysis_tool.invoke({
-                "sample_index": sample_index,
-                "interventions": interventions,
-                "target_variable": target_variable
-            })
+                # 使用样本索引
+                if state.get('reference_sample_index') is not None:
+                    sample_index = state['reference_sample_index']
+                    print(f"  使用用户选择的参考批次: 索引 {sample_index}")
+                # 如果提取到了原始值，尝试找到接近该值的样本
+                elif original_value is not None and _causal_model_instance is not None:
+                    df = _causal_model_instance.df
+                    # 使用第一个干预变量找到最接近的样本
+                    first_var = list(interventions.keys())[0]
+                    if first_var in df.columns:
+                        closest_idx = (df[first_var] - original_value).abs().idxmin()
+                        sample_index = int(closest_idx)
+                        print(f"  找到最接近原始值 {original_value} 的样本: 索引 {sample_index}")
+                else:
+                    sample_index = 100  # 默认样本
+                    print(f"  使用默认样本索引: {sample_index}")
+                
+                print(f"  干预变量: {', '.join(interventions.keys())}")
+                print(f"  干预值: {interventions}")
+                
+                result = counterfactual_analysis_tool.invoke({
+                    "sample_index": sample_index,
+                    "interventions": interventions,
+                    "target_variable": target_variable
+                })
             
         else:
             result = {"error": f"未知的分析类型: {analysis_type}"}
@@ -572,6 +755,319 @@ def causal_analyst_agent(state: CausalAnalysisState) -> dict:
         }
 
 
+def optimizer_agent(state: CausalAnalysisState) -> dict:
+    """
+    Optimizer Agent：根据因果分析结果，生成优化配比并预测强度
+    
+    职责：
+    1. 根据干预分析结果，找出最有效的调整变量
+    2. 基于用户目标（如"提升10%"），计算具体配比
+    3. 使用因果模型预测新配比的强度
+    4. 验证是否达到目标
+    """
+    print("\n🔧 Optimizer Agent 正在生成优化配比...")
+    
+    # 只对干预分析和反事实分析需要优化配比
+    analysis_type = state['analysis_type']
+    
+    if analysis_type not in ['intervention', 'counterfactual']:
+        print("  跳过优化（仅干预和反事实分析需要）")
+        return {
+            "optimized_config": None,
+            "predicted_strength": None,
+            "optimization_summary": ""
+        }
+    
+    try:
+        from dowhy import gcm
+        import numpy as np
+        
+        # 获取基准配比
+        if state.get('observed_config'):
+            base_config = state['observed_config'].copy()
+            print(f"  基准配比：用户输入")
+            
+            # 如果用户输入的配比中没有强度，先预测一个
+            if 'concrete_compressive_strength' not in base_config:
+                print(f"  🔮 预测基准强度...")
+                intervention_funcs = {
+                    'cement': lambda x: base_config.get('cement', 280),
+                    'blast_furnace_slag': lambda x: base_config.get('blast_furnace_slag', 0),
+                    'fly_ash': lambda x: base_config.get('fly_ash', 0),
+                    'water': lambda x: base_config.get('water', 180),
+                    'superplasticizer': lambda x: base_config.get('superplasticizer', 0),
+                    'coarse_aggregate': lambda x: base_config.get('coarse_aggregate', 1000),
+                    'fine_aggregate': lambda x: base_config.get('fine_aggregate', 800),
+                    'age': lambda x: base_config.get('age', 28)
+                }
+                samples = gcm.interventional_samples(
+                    _causal_model_instance.causal_model,
+                    intervention_funcs,
+                    num_samples_to_draw=100
+                )
+                predicted_strength = float(samples['concrete_compressive_strength'].mean())
+                base_config['concrete_compressive_strength'] = predicted_strength
+                print(f"  ✓ 基准强度: {predicted_strength:.2f} MPa")
+                
+        elif state.get('reference_sample_index') is not None:
+            idx = state['reference_sample_index']
+            base_config = _causal_model_instance.df.iloc[idx].to_dict()
+            print(f"  基准配比：参考批次#{idx}")
+        else:
+            # 使用数据集中等强度样本作为基准
+            df = _causal_model_instance.df
+            df_28d = df[df['age'] == 28]
+            median_idx = (df_28d['concrete_compressive_strength'] - df_28d['concrete_compressive_strength'].median()).abs().idxmin()
+            base_config = df.iloc[median_idx].to_dict()
+            print(f"  基准配比：中等强度样本")
+        
+        # 提取当前强度和目标提升
+        base_strength = base_config.get('concrete_compressive_strength', 35.0)
+        target_improvement = state.get('target_improvement')  # 百分比，如10表示提升10%
+        
+        # 从干预分析结果获取最有效的变量
+        causal_results = state.get('causal_results', {})
+        
+        # 生成优化配比
+        optimized_config = base_config.copy()
+        
+        if analysis_type == 'intervention' and 'interventions' in causal_results:
+            # 基于干预分析结果优化
+            interventions = causal_results['interventions']
+            
+            # 找出Top 3最有效的变量（选择置信区间不包含0的）
+            significant_interventions = [
+                i for i in interventions 
+                if i['confidence_interval'][0] * i['confidence_interval'][1] > 0  # 同号说明显著
+            ]
+            top_interventions = sorted(significant_interventions, 
+                                      key=lambda x: abs(x['causal_effect']), 
+                                      reverse=True)[:3]
+            
+            if not top_interventions:
+                # 如果没有显著变量，使用绝对效应最大的前3个
+                top_interventions = sorted(interventions, 
+                                          key=lambda x: abs(x['causal_effect']), 
+                                          reverse=True)[:3]
+            
+            print(f"\n  Top 3 有效变量:")
+            for interv in top_interventions:
+                print(f"    • {interv['variable']}: 效应={interv['causal_effect']:+.4f}")
+            
+            # 如果用户指定了目标提升，使用精确优化
+            if target_improvement is not None and target_improvement != 0:
+                print(f"\n  🎯 目标：提升 {target_improvement}%")
+                print(f"  使用迭代优化算法寻找最优配比...")
+                
+                target_strength = base_strength * (1 + target_improvement / 100.0)
+                
+                # 定义预测函数
+                def predict_strength(config):
+                    """给定配比，预测强度"""
+                    intervention_funcs = {
+                        'cement': lambda x: config.get('cement', 280),
+                        'blast_furnace_slag': lambda x: config.get('blast_furnace_slag', 0),
+                        'fly_ash': lambda x: config.get('fly_ash', 0),
+                        'water': lambda x: config.get('water', 180),
+                        'superplasticizer': lambda x: config.get('superplasticizer', 0),
+                        'coarse_aggregate': lambda x: config.get('coarse_aggregate', 1000),
+                        'fine_aggregate': lambda x: config.get('fine_aggregate', 800),
+                        'age': lambda x: config.get('age', 28)
+                    }
+                    samples = gcm.interventional_samples(
+                        _causal_model_instance.causal_model,
+                        intervention_funcs,
+                        num_samples_to_draw=100
+                    )
+                    return float(samples['concrete_compressive_strength'].mean())
+                
+                # 使用二分搜索找到合适的调整比例
+                best_scale = 1.0
+                best_config = base_config.copy()
+                best_strength = base_strength
+                best_diff = abs(base_strength - target_strength)
+                
+                # 二分搜索范围
+                low_scale = 0.0
+                high_scale = 0.5  # 最多调整50%
+                
+                max_iterations = 8
+                tolerance = target_strength * 0.02  # 允许2%的误差
+                
+                for iteration in range(max_iterations):
+                    mid_scale = (low_scale + high_scale) / 2.0
+                    
+                    # 应用调整
+                    test_config = base_config.copy()
+                    for interv in top_interventions:
+                        var = interv['variable']
+                        effect = interv['causal_effect']
+                        if var in test_config:
+                            current_val = base_config[var]
+                            # 正效应增加，负效应减少
+                            if effect > 0:
+                                test_config[var] = current_val * (1 + mid_scale)
+                            else:
+                                test_config[var] = current_val * (1 - mid_scale)
+                    
+                    # 预测强度
+                    pred_strength = predict_strength(test_config)
+                    diff = pred_strength - target_strength
+                    
+                    print(f"    迭代 {iteration+1}: scale={mid_scale:.3f}, 预测={pred_strength:.2f} MPa, 差距={diff:+.2f} MPa")
+                    
+                    # 更新最优解
+                    if abs(diff) < best_diff:
+                        best_diff = abs(diff)
+                        best_scale = mid_scale
+                        best_config = test_config.copy()
+                        best_strength = pred_strength
+                    
+                    # 检查是否达到目标
+                    if abs(diff) < tolerance:
+                        print(f"    ✓ 已达到目标（误差 < {tolerance:.2f} MPa）")
+                        break
+                    
+                    # 调整搜索范围
+                    if diff < 0:
+                        # 预测强度不够，需要更大的调整
+                        low_scale = mid_scale
+                    else:
+                        # 预测强度过高，减小调整
+                        high_scale = mid_scale
+                
+                optimized_config = best_config
+                predicted_strength = best_strength
+                
+                print(f"\n  ✓ 最优调整比例: {best_scale:.1%}")
+                print(f"  ✓ 配比调整详情:")
+                for interv in top_interventions:
+                    var = interv['variable']
+                    if var in optimized_config:
+                        old_val = base_config[var]
+                        new_val = optimized_config[var]
+                        change_pct = ((new_val - old_val) / old_val) * 100
+                        print(f"    • {var}: {old_val:.1f} → {new_val:.1f} ({change_pct:+.1f}%)")
+            
+            else:
+                # 没有指定目标，使用默认10%调整
+                print(f"\n  使用默认调整策略（每个变量±10%）")
+                for interv in top_interventions:
+                    var = interv['variable']
+                    effect = interv['causal_effect']
+                    
+                    if var in optimized_config:
+                        current_val = optimized_config[var]
+                        
+                        if effect > 0:
+                            new_val = current_val * 1.1
+                            print(f"    • {var}: {current_val:.1f} → {new_val:.1f} (↑10%, 效应: +{effect:.3f})")
+                        else:
+                            new_val = current_val * 0.9
+                            print(f"    • {var}: {current_val:.1f} → {new_val:.1f} (↓10%, 效应: {effect:.3f})")
+                        
+                        optimized_config[var] = new_val
+                
+                # 预测优化后的强度
+                intervention_funcs = {
+                    'cement': lambda x: optimized_config.get('cement', 280),
+                    'blast_furnace_slag': lambda x: optimized_config.get('blast_furnace_slag', 0),
+                    'fly_ash': lambda x: optimized_config.get('fly_ash', 0),
+                    'water': lambda x: optimized_config.get('water', 180),
+                    'superplasticizer': lambda x: optimized_config.get('superplasticizer', 0),
+                    'coarse_aggregate': lambda x: optimized_config.get('coarse_aggregate', 1000),
+                    'fine_aggregate': lambda x: optimized_config.get('fine_aggregate', 800),
+                    'age': lambda x: optimized_config.get('age', 28)
+                }
+                
+                samples = gcm.interventional_samples(
+                    _causal_model_instance.causal_model,
+                    intervention_funcs,
+                    num_samples_to_draw=100
+                )
+                
+                predicted_strength = float(samples['concrete_compressive_strength'].mean())
+        
+        else:
+            # 反事实分析：应用干预值到配比
+            if analysis_type == 'counterfactual' and 'interventions' in causal_results:
+                # 从反事实分析结果中提取干预值
+                interventions_list = causal_results.get('interventions', [])
+                print(f"\n  📊 应用反事实干预:")
+                for interv in interventions_list:
+                    var = interv['variable']
+                    old_val = interv['original_value']
+                    new_val = interv['new_value']
+                    if var in optimized_config:
+                        optimized_config[var] = new_val
+                        print(f"    • {var}: {old_val:.1f} → {new_val:.1f}")
+            
+            # 使用干预后的配比预测强度
+            intervention_funcs = {
+                'cement': lambda x: optimized_config.get('cement', 280),
+                'blast_furnace_slag': lambda x: optimized_config.get('blast_furnace_slag', 0),
+                'fly_ash': lambda x: optimized_config.get('fly_ash', 0),
+                'water': lambda x: optimized_config.get('water', 180),
+                'superplasticizer': lambda x: optimized_config.get('superplasticizer', 0),
+                'coarse_aggregate': lambda x: optimized_config.get('coarse_aggregate', 1000),
+                'fine_aggregate': lambda x: optimized_config.get('fine_aggregate', 800),
+                'age': lambda x: optimized_config.get('age', 28)
+            }
+            
+            samples = gcm.interventional_samples(
+                _causal_model_instance.causal_model,
+                intervention_funcs,
+                num_samples_to_draw=100
+            )
+            
+            predicted_strength = float(samples['concrete_compressive_strength'].mean())
+        
+        strength_improvement = ((predicted_strength - base_strength) / base_strength) * 100
+        
+        print(f"\n  ✓ 基准强度: {base_strength:.2f} MPa")
+        print(f"  ✓ 预测强度: {predicted_strength:.2f} MPa")
+        print(f"  ✓ 实际提升: {strength_improvement:+.1f}%")
+        if target_improvement:
+            error = abs(strength_improvement - target_improvement)
+            print(f"  ✓ 目标提升: {target_improvement:+.1f}%")
+            print(f"  ✓ 误差: {error:.2f}个百分点")
+        
+        # 生成优化摘要
+        optimization_summary = f"""
+优化配比方案：
+  基准强度: {base_strength:.2f} MPa
+  优化强度: {predicted_strength:.2f} MPa
+  实际提升: {strength_improvement:+.1f}%
+{"  目标提升: " + f"{target_improvement:+.1f}%" if target_improvement else ""}
+
+建议配比：
+  • 水泥: {optimized_config.get('cement', 0):.1f} kg/m³
+  • 高炉矿渣: {optimized_config.get('blast_furnace_slag', 0):.1f} kg/m³
+  • 粉煤灰: {optimized_config.get('fly_ash', 0):.1f} kg/m³
+  • 水: {optimized_config.get('water', 0):.1f} kg/m³
+  • 高效减水剂: {optimized_config.get('superplasticizer', 0):.1f} kg/m³
+  • 粗骨料: {optimized_config.get('coarse_aggregate', 0):.1f} kg/m³
+  • 细骨料: {optimized_config.get('fine_aggregate', 0):.1f} kg/m³
+  • 龄期: {optimized_config.get('age', 28):.0f} 天
+"""
+        
+        return {
+            "optimized_config": optimized_config,
+            "predicted_strength": predicted_strength,
+            "optimization_summary": optimization_summary
+        }
+        
+    except Exception as e:
+        print(f"  ⚠️  优化失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "optimized_config": None,
+            "predicted_strength": None,
+            "optimization_summary": f"优化失败: {e}"
+        }
+
+
 def advisor_agent(state: CausalAnalysisState) -> dict:
     """
     Advisor Agent：解读因果分析结果，生成决策建议
@@ -581,9 +1077,7 @@ def advisor_agent(state: CausalAnalysisState) -> dict:
     2. 生成通俗易懂的解释
     3. 提供可操作的工艺优化建议
     """
-    print("\n" + "="*80)
-    print("💡 Advisor Agent 正在生成决策建议...")
-    print("="*80)
+    print("\n💡 Advisor Agent 正在生成决策建议...")
     
     # 检查是否有错误
     if state.get('error'):
@@ -601,6 +1095,14 @@ def advisor_agent(state: CausalAnalysisState) -> dict:
     
     import json
     
+    # 准备优化配比信息
+    optimization_info = ""
+    if state.get('optimized_config') and state.get('predicted_strength'):
+        optimization_info = f"""
+
+优化配比方案：
+{state.get('optimization_summary', '')}"""
+    
     prompt = f"""你是一个混凝土配合比优化的专家顾问。请基于因果分析结果，生成实用的决策建议。
 
 应用场景：高性能混凝土配合比设计与强度优化
@@ -613,6 +1115,7 @@ def advisor_agent(state: CausalAnalysisState) -> dict:
 
 详细结果：
 {json.dumps(state['causal_results'], indent=2, ensure_ascii=False)}
+{optimization_info}
 
 关键变量说明（基于UCI真实数据集，9个原始变量）：
 - concrete_compressive_strength: 抗压强度（MPa）**【目标变量】** - 2.3-82.6，均值35.8
@@ -642,11 +1145,6 @@ def advisor_agent(state: CausalAnalysisState) -> dict:
     
     response = llm.invoke(prompt)
     recommendations = response.content
-    
-    print("\n" + "="*80)
-    print("📋 决策建议")
-    print("="*80)
-    print(recommendations)
     
     return {
         "recommendations": recommendations
@@ -713,15 +1211,17 @@ def create_causal_agent_graph():
     # 创建状态图
     workflow = StateGraph(CausalAnalysisState)
     
-    # 添加三个智能体节点
+    # 添加四个智能体节点
     workflow.add_node("router", router_agent)
     workflow.add_node("analyst", causal_analyst_agent)
+    workflow.add_node("optimizer", optimizer_agent)  # 新增优化器节点
     workflow.add_node("advisor", advisor_agent)
     
-    # 定义流程：START → Router → Analyst → Advisor → END
+    # 定义流程：START → Router → Analyst → Optimizer → Advisor → END
     workflow.add_edge(START, "router")
     workflow.add_edge("router", "analyst")
-    workflow.add_edge("analyst", "advisor")
+    workflow.add_edge("analyst", "optimizer")  # 分析后优化
+    workflow.add_edge("optimizer", "advisor")  # 优化后建议
     workflow.add_edge("advisor", END)
     
     # 编译工作流
@@ -740,6 +1240,8 @@ __all__ = [
     'create_causal_agent_graph',
     'router_agent',
     'causal_analyst_agent',
-    'advisor_agent'
+    'optimizer_agent',
+    'advisor_agent',
+    'math_calculator_tool'
 ]
 
