@@ -209,6 +209,44 @@ class PredictResponse(BaseModel):
     error: Optional[str] = None
 
 
+class OptimizeRequest(BaseModel):
+    """智能优化请求"""
+    base_config: ObservedConfig = Field(..., description="基准配比")
+    target_strength: float = Field(..., description="目标强度 (MPa)", ge=20, le=80)
+    adjust_factors: List[str] = Field(..., description="要调整的因素列表")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "base_config": {
+                    "cement": 300,
+                    "blast_furnace_slag": 0,
+                    "fly_ash": 0,
+                    "water": 185,
+                    "superplasticizer": 3,
+                    "coarse_aggregate": 1050,
+                    "fine_aggregate": 850,
+                    "age": 28
+                },
+                "target_strength": 45,
+                "adjust_factors": ["cement", "fly_ash"]
+            }
+        }
+
+
+class OptimizeResponse(BaseModel):
+    """智能优化响应"""
+    success: bool
+    base_config: Dict = Field(..., description="基准配比")
+    base_strength: float = Field(..., description="基准强度 (MPa)")
+    optimized_config: Dict = Field(..., description="优化后的配比")
+    predicted_strength: float = Field(..., description="预测强度 (MPa)")
+    improvement_percent: float = Field(..., description="强度提升百分比")
+    adjustments: List[Dict] = Field(..., description="调整详情")
+    recommendations: str = Field(..., description="建议")
+    error: Optional[str] = None
+
+
 # ============================================================================
 # API 端点
 # ============================================================================
@@ -790,6 +828,211 @@ async def predict_strength(request: PredictRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"预测失败: {str(e)}")
+
+
+@app.post("/api/optimize", response_model=OptimizeResponse)
+async def optimize_config(request: OptimizeRequest):
+    """
+    智能优化混凝土配合比
+    
+    根据基准配比、目标强度和可调整因素，自动优化配合比以达到目标强度
+    
+    - **base_config**: 基准配比
+    - **target_strength**: 目标强度 (MPa)
+    - **adjust_factors**: 可调整的因素列表（如 ["cement", "fly_ash"]）
+    
+    返回优化后的配比方案
+    """
+    try:
+        from dowhy import gcm
+        
+        print(f"\n{'='*80}")
+        print(f"🎯 收到智能优化请求")
+        print(f"  • 目标强度: {request.target_strength} MPa")
+        print(f"  • 调整因素: {', '.join(request.adjust_factors)}")
+        print(f"{'='*80}\n")
+        
+        # 1. 预测基准强度
+        base_config_dict = {
+            'cement': request.base_config.cement,
+            'blast_furnace_slag': request.base_config.blast_furnace_slag,
+            'fly_ash': request.base_config.fly_ash,
+            'water': request.base_config.water,
+            'superplasticizer': request.base_config.superplasticizer,
+            'coarse_aggregate': request.base_config.coarse_aggregate,
+            'fine_aggregate': request.base_config.fine_aggregate,
+            'age': request.base_config.age
+        }
+        
+        print("📊 步骤1：预测基准强度...")
+        base_intervention_funcs = {k: (lambda v: lambda x: v)(v) for k, v in base_config_dict.items()}
+        base_samples = gcm.interventional_samples(
+            causal_model.causal_model,
+            base_intervention_funcs,
+            num_samples_to_draw=100
+        )
+        base_strength = float(base_samples['concrete_compressive_strength'].mean())
+        print(f"  ✓ 基准强度: {base_strength:.2f} MPa\n")
+        
+        # 2. 执行干预分析，获取各因素的因果效应
+        print("📊 步骤2：分析各因素的因果效应...")
+        weights_df = causal_model.intervention_analysis(
+            target='concrete_compressive_strength',
+            step_size=1.0,
+            num_samples=5000,
+            num_bootstrap_resamples=20
+        )
+        
+        # 筛选用户指定的因素
+        selected_factors = weights_df[weights_df['Variable'].isin(request.adjust_factors)].copy()
+        selected_factors = selected_factors.sort_values('Causal_Effect', key=abs, ascending=False)
+        
+        print(f"  选中因素效应:")
+        for _, row in selected_factors.iterrows():
+            print(f"    • {row['Variable']}: {row['Causal_Effect']:+.4f}")
+        print()
+        
+        # 3. 使用二分搜索优化配比
+        print("📊 步骤3：使用迭代优化算法寻找最优配比...")
+        
+        def predict_strength_for_config(config):
+            """给定配比，预测强度"""
+            intervention_funcs = {k: (lambda v: lambda x: v)(v) for k, v in config.items()}
+            samples = gcm.interventional_samples(
+                causal_model.causal_model,
+                intervention_funcs,
+                num_samples_to_draw=100
+            )
+            return float(samples['concrete_compressive_strength'].mean())
+        
+        # 二分搜索参数
+        low_scale = 0.0
+        high_scale = 0.5  # 最多调整50%
+        best_config = base_config_dict.copy()
+        best_strength = base_strength
+        best_diff = abs(base_strength - request.target_strength)
+        
+        max_iterations = 10
+        tolerance = request.target_strength * 0.02  # 2%误差
+        
+        for iteration in range(max_iterations):
+            mid_scale = (low_scale + high_scale) / 2.0
+            
+            # 应用调整
+            test_config = base_config_dict.copy()
+            for _, row in selected_factors.iterrows():
+                var = row['Variable']
+                effect = row['Causal_Effect']
+                if var in test_config:
+                    current_val = base_config_dict[var]
+                    # 正效应增加，负效应减少
+                    if effect > 0:
+                        test_config[var] = current_val * (1 + mid_scale)
+                    else:
+                        test_config[var] = current_val * (1 - mid_scale)
+            
+            # 预测强度
+            pred_strength = predict_strength_for_config(test_config)
+            diff = pred_strength - request.target_strength
+            
+            print(f"  迭代 {iteration+1}: scale={mid_scale:.3f}, 预测={pred_strength:.2f} MPa, 差距={diff:+.2f} MPa")
+            
+            # 更新最优解
+            if abs(diff) < best_diff:
+                best_diff = abs(diff)
+                best_config = test_config.copy()
+                best_strength = pred_strength
+            
+            # 检查是否达到目标
+            if abs(diff) < tolerance:
+                print(f"  ✓ 已达到目标（误差 < {tolerance:.2f} MPa）\n")
+                break
+            
+            # 调整搜索范围
+            if diff < 0:
+                low_scale = mid_scale
+            else:
+                high_scale = mid_scale
+        
+        print(f"  ✓ 优化完成\n")
+        
+        # 4. 生成调整详情
+        adjustments = []
+        var_names_cn = {
+            'cement': '水泥',
+            'blast_furnace_slag': '高炉矿渣',
+            'fly_ash': '粉煤灰',
+            'water': '水',
+            'superplasticizer': '高效减水剂',
+            'coarse_aggregate': '粗骨料',
+            'fine_aggregate': '细骨料',
+            'age': '龄期'
+        }
+        
+        for var in request.adjust_factors:
+            if var in base_config_dict and var in best_config:
+                old_val = base_config_dict[var]
+                new_val = best_config[var]
+                change = new_val - old_val
+                change_pct = (change / old_val * 100) if old_val != 0 else 0
+                
+                adjustments.append({
+                    'variable': var,
+                    'name': var_names_cn.get(var, var),
+                    'old_value': round(old_val, 2),
+                    'new_value': round(new_val, 2),
+                    'change': round(change, 2),
+                    'change_percent': round(change_pct, 2)
+                })
+        
+        # 5. 生成建议
+        improvement_pct = ((best_strength - base_strength) / base_strength * 100) if base_strength != 0 else 0
+        
+        recommendations = f"""
+🎯 优化方案摘要
+
+基准强度：{base_strength:.2f} MPa
+优化强度：{best_strength:.2f} MPa
+实际提升：{improvement_pct:+.1f}%
+目标强度：{request.target_strength:.2f} MPa
+误差：{abs(best_strength - request.target_strength):.2f} MPa
+
+📝 配比调整建议：
+"""
+        
+        for adj in adjustments:
+            recommendations += f"\n• {adj['name']}: {adj['old_value']:.1f} → {adj['new_value']:.1f} kg/m³ ({adj['change_percent']:+.1f}%)"
+        
+        recommendations += f"""
+
+💡 实施建议：
+1. 建议按照优化后的配比进行试配
+2. 关注施工和易性的变化
+3. 必要时微调减水剂用量
+4. 建议至少制作3组试块验证强度
+"""
+        
+        response = OptimizeResponse(
+            success=True,
+            base_config=base_config_dict,
+            base_strength=round(base_strength, 2),
+            optimized_config={k: round(v, 2) for k, v in best_config.items()},
+            predicted_strength=round(best_strength, 2),
+            improvement_percent=round(improvement_pct, 2),
+            adjustments=adjustments,
+            recommendations=recommendations,
+            error=None
+        )
+        
+        print(f"✅ 优化完成: {base_strength:.2f} → {best_strength:.2f} MPa ({improvement_pct:+.1f}%)\n")
+        
+        return response
+        
+    except Exception as e:
+        print(f"\n❌ 优化失败: {str(e)}\n")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"优化失败: {str(e)}")
 
 
 # ============================================================================

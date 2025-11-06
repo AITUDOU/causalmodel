@@ -11,6 +11,7 @@
   - [2. 强度预测](#2-强度预测)
   - [3. 因果分析](#3-因果分析)
   - [3.2. 因果分析（流式响应）](#32-因果分析流式响应)
+  - [3.3. 智能配比优化](#33-智能配比优化)
   - [4. 参考批次](#4-参考批次)
   - [5. 变量信息](#5-变量信息)
   - [6. 因果图结构](#6-因果图结构)
@@ -62,6 +63,7 @@ python3 api_server.py
 | POST | `/api/predict` | 预测混凝土强度 |
 | POST | `/api/analyze` | 因果分析（智能问答，完整响应） |
 | POST | `/api/analyze_stream` | 🔥 **因果分析（流式响应，实时进度）** |
+| POST | `/api/optimize` | 🎯 **智能配比优化（GUI驱动）** |
 | GET | `/api/samples` | 获取参考批次 |
 | GET | `/api/variables` | 获取变量信息 |
 | GET | `/api/graph` | 获取因果图结构 |
@@ -442,6 +444,135 @@ while (true) {
 
 ---
 
+### 3.3. 智能配比优化 🎯 **新功能**
+
+直接优化混凝土配合比以达到目标强度，专为GUI界面设计的高效API。
+
+**请求**
+
+```http
+POST /api/optimize
+Content-Type: application/json
+```
+
+**请求体**
+
+```json
+{
+  "base_config": {
+    "cement": 300,
+    "blast_furnace_slag": 0,
+    "fly_ash": 0,
+    "water": 185,
+    "superplasticizer": 3,
+    "coarse_aggregate": 1050,
+    "fine_aggregate": 850,
+    "age": 28
+  },
+  "target_strength": 45,
+  "adjust_factors": ["cement", "fly_ash"]
+}
+```
+
+**参数说明**
+
+- `base_config` (必填): 基准配比
+  - 包含全部8个配比参数
+- `target_strength` (必填): 目标强度 (MPa)
+  - 范围: 20-80 MPa
+- `adjust_factors` (必填): 允许调整的因素列表
+  - 可选值: `["cement", "blast_furnace_slag", "fly_ash", "water", "superplasticizer", "coarse_aggregate", "fine_aggregate", "age"]`
+  - 建议: 选择2-3个因素
+
+**响应**
+
+```json
+{
+  "success": true,
+  "base_config": {
+    "cement": 300,
+    "water": 185,
+    ...
+  },
+  "base_strength": 30.52,
+  "optimized_config": {
+    "cement": 375.2,
+    "blast_furnace_slag": 0,
+    "fly_ash": 45.3,
+    "water": 185,
+    "superplasticizer": 3,
+    "coarse_aggregate": 1050,
+    "fine_aggregate": 850,
+    "age": 28
+  },
+  "predicted_strength": 45.18,
+  "improvement_percent": 48.03,
+  "adjustments": [
+    {
+      "variable": "cement",
+      "name": "水泥",
+      "old_value": 300,
+      "new_value": 375.2,
+      "change": 75.2,
+      "change_percent": 25.07
+    },
+    {
+      "variable": "fly_ash",
+      "name": "粉煤灰",
+      "old_value": 0,
+      "new_value": 45.3,
+      "change": 45.3,
+      "change_percent": 0
+    }
+  ],
+  "recommendations": "🎯 优化方案摘要\n\n基准强度：30.52 MPa\n优化强度：45.18 MPa\n实际提升：+48.0%\n目标强度：45.00 MPa\n误差：0.18 MPa\n\n📝 配比调整建议：\n\n• 水泥: 300.0 → 375.2 kg/m³ (+25.1%)\n• 粉煤灰: 0.0 → 45.3 kg/m³\n\n💡 实施建议：\n1. 建议按照优化后的配比进行试配\n2. 关注施工和易性的变化\n3. 必要时微调减水剂用量\n4. 建议至少制作3组试块验证强度",
+  "error": null
+}
+```
+
+**响应字段说明**
+
+- `base_config`: 基准配比（完整的8个参数）
+- `base_strength`: 基准配比的预测强度 (MPa)
+- `optimized_config`: 优化后的配比（完整的8个参数）
+- `predicted_strength`: 优化配比的预测强度 (MPa)
+- `improvement_percent`: 强度提升百分比
+- `adjustments`: 调整详情列表
+  - `variable`: 变量名
+  - `name`: 中文名称
+  - `old_value`: 原始值
+  - `new_value`: 优化值
+  - `change`: 变化量
+  - `change_percent`: 变化百分比
+- `recommendations`: 工程建议（含实施方案）
+
+**优化算法**
+
+1. **基准强度预测**: 使用因果模型预测当前配比的强度
+2. **因果效应分析**: 计算每个可调整因素的因果效应
+3. **二分搜索优化**: 迭代寻找最优调整比例（最多10次）
+4. **精度控制**: 目标强度的±2%误差容忍度
+5. **结果验证**: 返回完整的优化配比和预测强度
+
+**使用场景**
+
+✅ **GUI驱动**: 专为Web界面设计，用户通过滑块和复选框操作
+✅ **快速响应**: 10-20秒返回结果
+✅ **精确控制**: 只调整用户指定的因素
+✅ **工程实用**: 返回完整配比和实施建议
+
+**与 `/api/analyze` 的区别**
+
+| 特性 | `/api/optimize` | `/api/analyze` |
+|------|----------------|----------------|
+| 输入方式 | 结构化参数 | 自然语言 |
+| 适用场景 | GUI界面操作 | 智能问答 |
+| 响应速度 | 10-20秒 | 15-30秒 |
+| 因素控制 | 用户精确指定 | 系统自动选择 |
+| 返回格式 | JSON结构化 | 含LLM建议 |
+
+---
+
 ### 4. 参考批次
 
 获取典型的参考批次样本（28天龄期）。
@@ -674,6 +805,66 @@ GET /api/graph
 }
 ```
 
+### OptimizeRequest
+
+```typescript
+{
+  base_config: {                     // 基准配比（必填）
+    cement: number;                  // 100-600 kg/m³
+    blast_furnace_slag: number;      // 0-400 kg/m³
+    fly_ash: number;                 // 0-250 kg/m³
+    water: number;                   // 100-300 kg/m³
+    superplasticizer: number;        // 0-40 kg/m³
+    coarse_aggregate: number;        // 700-1200 kg/m³
+    fine_aggregate: number;          // 500-1100 kg/m³
+    age: number;                     // 1-365 天
+  };
+  target_strength: number;           // 目标强度 (20-80 MPa)
+  adjust_factors: string[];          // 允许调整的因素列表（如 ["cement", "fly_ash"]）
+}
+```
+
+### OptimizeResponse
+
+```typescript
+{
+  success: boolean;
+  base_config: {                     // 基准配比
+    cement: number;
+    blast_furnace_slag: number;
+    fly_ash: number;
+    water: number;
+    superplasticizer: number;
+    coarse_aggregate: number;
+    fine_aggregate: number;
+    age: number;
+  };
+  base_strength: number;             // 基准强度 (MPa)
+  optimized_config: {                // 优化后的配比
+    cement: number;
+    blast_furnace_slag: number;
+    fly_ash: number;
+    water: number;
+    superplasticizer: number;
+    coarse_aggregate: number;
+    fine_aggregate: number;
+    age: number;
+  };
+  predicted_strength: number;        // 优化后的预测强度 (MPa)
+  improvement_percent: number;       // 强度提升百分比
+  adjustments: Array<{               // 调整详情
+    variable: string;                // 变量名（英文）
+    name: string;                    // 变量名（中文）
+    old_value: number;               // 原始值
+    new_value: number;               // 优化值
+    change: number;                  // 变化量
+    change_percent: number;          // 变化百分比
+  }>;
+  recommendations: string;           // 工程建议
+  error: string | null;
+}
+```
+
 ---
 
 ## ⚠️ 错误处理
@@ -811,6 +1002,31 @@ for line in response.iter_lines():
             elif event['type'] == 'result':
                 final_result = event['data']
                 print(f"✅ 分析完成: {final_result['predicted_strength']:.2f} MPa")
+
+# 7. 🎯 智能配比优化（新功能）
+response = requests.post(
+    "http://localhost:8000/api/optimize",
+    json={
+        "base_config": {
+            "cement": 300,
+            "blast_furnace_slag": 0,
+            "fly_ash": 0,
+            "water": 185,
+            "superplasticizer": 3,
+            "coarse_aggregate": 1050,
+            "fine_aggregate": 850,
+            "age": 28
+        },
+        "target_strength": 45,
+        "adjust_factors": ["cement", "fly_ash"]
+    }
+)
+result = response.json()
+print(f"基准强度: {result['base_strength']:.2f} MPa")
+print(f"优化强度: {result['predicted_strength']:.2f} MPa")
+print(f"提升: {result['improvement_percent']:.1f}%")
+for adj in result['adjustments']:
+    print(f"  {adj['name']}: {adj['old_value']:.1f} → {adj['new_value']:.1f} kg/m³")
 ```
 
 ### JavaScript (Fetch API)
@@ -855,7 +1071,7 @@ const analyzeQuery = async (query) => {
   return data;
 };
 
-// 3. 🎯 目标导向优化（新功能）
+// 3. 🎯 目标导向优化（新功能 - 自然语言方式）
 const optimizeWithTarget = async (targetImprovement) => {
   const response = await fetch('http://localhost:8000/api/analyze', {
     method: 'POST',
@@ -874,6 +1090,49 @@ const optimizeWithTarget = async (targetImprovement) => {
   console.log('优化配比:', data.optimized_config);
   return data;
 };
+
+// 4. 🎯 智能配比优化（新功能 - GUI驱动方式）
+const optimizeConfig = async (baseConfig, targetStrength, adjustFactors) => {
+  const response = await fetch('http://localhost:8000/api/optimize', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      base_config: baseConfig,
+      target_strength: targetStrength,
+      adjust_factors: adjustFactors
+    })
+  });
+  
+  const data = await response.json();
+  console.log(`基准强度: ${data.base_strength.toFixed(2)} MPa`);
+  console.log(`优化强度: ${data.predicted_strength.toFixed(2)} MPa`);
+  console.log(`提升: ${data.improvement_percent.toFixed(1)}%`);
+  
+  console.log('\n调整详情:');
+  data.adjustments.forEach(adj => {
+    console.log(`  ${adj.name}: ${adj.old_value} → ${adj.new_value} kg/m³ (${adj.change_percent.toFixed(1)}%)`);
+  });
+  
+  return data;
+};
+
+// 使用示例
+optimizeConfig(
+  {
+    cement: 300,
+    blast_furnace_slag: 0,
+    fly_ash: 0,
+    water: 185,
+    superplasticizer: 3,
+    coarse_aggregate: 1050,
+    fine_aggregate: 850,
+    age: 28
+  },
+  45,
+  ['cement', 'fly_ash']
+);
 ```
 
 ### cURL
@@ -945,7 +1204,25 @@ curl -X POST http://localhost:8000/api/analyze_stream \
     "reference_sample_index": 100
   }'
 
-# 8. 获取参考批次
+# 8. 🎯 智能配比优化（新功能）
+curl -X POST http://localhost:8000/api/optimize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "base_config": {
+      "cement": 300,
+      "blast_furnace_slag": 0,
+      "fly_ash": 0,
+      "water": 185,
+      "superplasticizer": 3,
+      "coarse_aggregate": 1050,
+      "fine_aggregate": 850,
+      "age": 28
+    },
+    "target_strength": 45,
+    "adjust_factors": ["cement", "fly_ash"]
+  }'
+
+# 9. 获取参考批次
 curl http://localhost:8000/api/samples
 ```
 
@@ -1008,6 +1285,51 @@ curl http://localhost:8000/api/samples
 ---
 
 ## ✨ 新功能亮点
+
+### 🎯 GUI驱动的智能配比优化（v2.2新增）
+
+**问题**: 传统的自然语言分析方式对于GUI操作不够友好，用户需要构造复杂的问句，且系统会自动选择要调整的变量，无法精确控制。
+
+**解决方案**: 
+- **专用API端点** (`/api/optimize`): 接收结构化参数，直接返回优化结果
+- **三步骤交互流程**: 基准配比 → 预测强度 → 选择因素 → 优化结果
+- **用户精确控制**: 用户通过复选框明确指定哪些因素可以调整
+- **动态范围调整**: 基于基准强度自动设置目标强度的合理范围
+
+**工作流程**:
+```
+1. 用户输入基准配比（或选择预设）→ 系统预测基准强度（如30.5 MPa）
+2. 用户滑动选择目标强度（滑块范围自动设为30-60 MPa）
+3. 用户勾选允许调整的因素（如：☑️ 水泥、☑️ 粉煤灰）
+4. 点击"开始智能优化" → 系统只调整选中的因素，达到目标强度
+```
+
+**技术特点**:
+- **双重优化路径**: 
+  - 自然语言路径：`/api/analyze` - 适合智能问答
+  - GUI驱动路径：`/api/optimize` - 适合界面操作
+- **精确因素控制**: 只调整用户指定的变量（如只调整水泥+粉煤灰）
+- **结构化响应**: 返回调整详情、完整配比、工程建议
+- **快速响应**: 10-20秒（跳过自然语言理解）
+
+**效果对比**:
+```
+传统方式 (/api/analyze):
+- 输入: "我想强度达到45 MPa，水泥和粉煤灰应该怎么调？"
+- 问题: 需要构造复杂问句，系统可能自动选择Top 3变量（不一定是用户想要的）
+- 耗时: 15-30秒（含LLM处理）
+
+新方式 (/api/optimize):
+- 输入: {base_config: {...}, target_strength: 45, adjust_factors: ["cement", "fly_ash"]}
+- 优势: 结构化参数，精确指定调整因素，返回完整调整详情
+- 耗时: 10-20秒（无LLM，纯因果推断）
+```
+
+**前端交互**:
+- ✅ 步骤1：预设配比按钮（C30/C40/C50/低水胶比）+ 手动输入
+- ✅ 步骤2：目标强度滑块（带实时数值显示）
+- ✅ 步骤3：8个因素的复选框（带emoji图标）
+- ✅ 结果展示：基准vs优化对比表格 + 完整配比卡片
 
 ### 🔥 智能数学计算工具（v2.1新增）
 
@@ -1101,6 +1423,46 @@ curl http://localhost:8000/api/samples
 ---
 
 ## 📝 版本更新日志
+
+### v2.2.0 (2025-11-06) 🎯
+
+**重大更新：GUI驱动的智能配比优化**
+
+**新增功能**:
+- 🎯 **智能配比优化API** (`/api/optimize`): 专为GUI界面设计的直接优化端点
+  - ✅ 三步骤工作流：设置基准配比 → 预测基准强度 → 选择调整因素 → 获得优化方案
+  - ✅ 用户精确控制：只调整用户勾选的因素（如水泥+粉煤灰）
+  - ✅ 动态目标范围：基于基准强度智能调整目标强度滑块范围
+  - ✅ 结构化响应：返回完整的调整详情、优化配比、工程建议
+- 🎨 **前端UI重设计**: 因果分析页面全新交互体验
+  - ✅ 步骤1：预设配比/手动输入 → 预测基准强度
+  - ✅ 步骤2：滑块选择目标强度（范围自动适配）
+  - ✅ 步骤3：多选框勾选要调整的因素
+  - ✅ 结果展示：基准vs优化对比、调整详情表格
+
+**技术改进**:
+- 🔧 新增 `OptimizeRequest` 和 `OptimizeResponse` Pydantic模型
+- 🔧 二分搜索算法优化：只调整用户指定的因素，最多10次迭代
+- 🔧 因果分析系统增强：支持 `specified_variables` 和 `target_value`
+- 🔧 Router Agent改进：识别用户指定的调整变量和目标强度
+
+**API变更**:
+- 新增 `POST /api/optimize` 端点（GUI驱动优化）
+- `CausalAnalysisState` 新增 `specified_variables` 和 `target_value` 字段
+- Optimizer Agent优先使用用户指定的变量进行优化
+
+**用户体验提升**:
+- 更直观：可视化的三步骤引导流程
+- 更快速：10-20秒完成优化（无需自然语言处理）
+- 更精确：用户完全控制哪些因素可以调整
+- 更实用：显示完整的调整详情和工程建议
+
+**性能指标**:
+- 响应时间：10-20秒
+- 精度控制：目标强度±2%误差
+- 支持因素：8个配比参数任意组合
+
+---
 
 ### v2.1.0 (2025-11-05) 🔥
 

@@ -49,6 +49,8 @@ class CausalAnalysisState(TypedDict):
     intervention_params: dict          # 干预参数
     routing_reasoning: str             # 路由推理过程
     target_improvement: float          # 目标提升幅度（百分比，如10表示提升10%）
+    specified_variables: list          # 用户指定要调整的变量列表
+    target_value: float                # 用户指定的目标值（如"强度达到45"中的45）
     
     # Causal Analyst 输出
     causal_results: dict               # 因果分析数值结果
@@ -321,6 +323,11 @@ def counterfactual_analysis_tool(
     
     try:
         df = _causal_model_instance.df
+        
+        # 验证索引是否在范围内
+        if sample_index < 0 or sample_index >= len(df):
+            return {"error": f"样本索引 {sample_index} 超出范围 [0, {len(df)-1}]"}
+        
         observed_data = df.iloc[[sample_index]]
         
         # 转换干预值为float
@@ -439,6 +446,8 @@ def router_agent(state: CausalAnalysisState) -> dict:
     "target_variable": "从上述变量列表中选择（必须是准确的变量名）",
     "reasoning": "你的推理过程（1-2句话）",
     "target_improvement": 目标提升百分比（如用户说"提升10%"则为10，如果没有明确提及则为null）,
+    "target_value": 用户指定的目标值（如"强度达到45"则为45，如果没有明确提及则为null）,
+    "specified_variables": ["用户明确要求调整的变量列表，如cement、fly_ash，如果没有则为空列表"],
     "extracted_info": {{
         // 如果是反事实分析：
         // 情况A - 绝对值干预（明确给出新值）：
@@ -478,9 +487,17 @@ def router_agent(state: CausalAnalysisState) -> dict:
 用户问："如果水泥300、水180、龄期28天，强度是多少？"
 回复：{{"intervention_variable": {{"cement": 300, "water": 180, "age": 28}}}}
 
-示例5（目标导向）：
+示例5（目标导向 - 百分比）：
 用户问："如果我想强度提升10%，应该如何调整配合比？"
-回复：{{"analysis_type": "intervention", "target_improvement": 10}}
+回复：{{"analysis_type": "intervention", "target_improvement": 10, "specified_variables": []}}
+
+示例6（目标导向 - 绝对值）：
+用户问："现在我想强度达到45，水泥和粉煤灰应该怎么调？"
+回复：{{"analysis_type": "intervention", "target_value": 45, "specified_variables": ["cement", "fly_ash"]}}
+
+示例7（目标导向 - 指定变量）：
+用户问："如何通过调整水和减水剂使强度达到50 MPa？"
+回复：{{"analysis_type": "intervention", "target_value": 50, "specified_variables": ["water", "superplasticizer"]}}
 
 【关键】运算类型映射：
 - "增加"/"添加"/"加" → "add"
@@ -508,13 +525,19 @@ def router_agent(state: CausalAnalysisState) -> dict:
         print(f"💡 推理: {parsed['reasoning']}")
         if parsed.get('target_improvement'):
             print(f"🎯 目标提升: {parsed['target_improvement']}%")
+        if parsed.get('target_value'):
+            print(f"🎯 目标值: {parsed['target_value']}")
+        if parsed.get('specified_variables'):
+            print(f"🔧 指定调整变量: {', '.join(parsed['specified_variables'])}")
         
         return {
             "analysis_type": parsed['analysis_type'],
             "target_variable": parsed['target_variable'],
             "routing_reasoning": parsed['reasoning'],
             "intervention_params": parsed.get('extracted_info', {}),
-            "target_improvement": parsed.get('target_improvement')
+            "target_improvement": parsed.get('target_improvement'),
+            "target_value": parsed.get('target_value'),
+            "specified_variables": parsed.get('specified_variables', [])
         }
         
     except Exception as e:
@@ -578,7 +601,13 @@ def causal_analyst_agent(state: CausalAnalysisState) -> dict:
                     return state['observed_config']
                 elif state.get('reference_sample_index') is not None:
                     idx = state['reference_sample_index']
-                    return _causal_model_instance.df.iloc[idx].to_dict()
+                    df = _causal_model_instance.df
+                    # 验证索引是否在范围内
+                    if idx < 0 or idx >= len(df):
+                        print(f"  ⚠️  参考索引 {idx} 超出范围 [0, {len(df)-1}]，使用默认中位数样本")
+                        median_idx = (df['concrete_compressive_strength'] - df['concrete_compressive_strength'].median()).abs().idxmin()
+                        return df.iloc[median_idx].to_dict()
+                    return df.iloc[idx].to_dict()
                 else:
                     # 使用数据集中位数样本
                     df = _causal_model_instance.df
@@ -700,12 +729,17 @@ def causal_analyst_agent(state: CausalAnalysisState) -> dict:
                 
             else:
                 # 使用样本索引
+                df = _causal_model_instance.df
                 if state.get('reference_sample_index') is not None:
                     sample_index = state['reference_sample_index']
-                    print(f"  使用用户选择的参考批次: 索引 {sample_index}")
+                    # 验证索引是否在范围内
+                    if sample_index < 0 or sample_index >= len(df):
+                        print(f"  ⚠️  参考索引 {sample_index} 超出范围 [0, {len(df)-1}]，使用默认样本")
+                        sample_index = min(100, len(df) - 1)  # 使用默认样本，确保不超出范围
+                    else:
+                        print(f"  使用用户选择的参考批次: 索引 {sample_index}")
                 # 如果提取到了原始值，尝试找到接近该值的样本
                 elif original_value is not None and _causal_model_instance is not None:
-                    df = _causal_model_instance.df
                     # 使用第一个干预变量找到最接近的样本
                     first_var = list(interventions.keys())[0]
                     if first_var in df.columns:
@@ -713,7 +747,7 @@ def causal_analyst_agent(state: CausalAnalysisState) -> dict:
                         sample_index = int(closest_idx)
                         print(f"  找到最接近原始值 {original_value} 的样本: 索引 {sample_index}")
                 else:
-                    sample_index = 100  # 默认样本
+                    sample_index = min(100, len(df) - 1)  # 默认样本，确保不超出范围
                     print(f"  使用默认样本索引: {sample_index}")
                 
                 print(f"  干预变量: {', '.join(interventions.keys())}")
@@ -811,14 +845,31 @@ def optimizer_agent(state: CausalAnalysisState) -> dict:
                 
         elif state.get('reference_sample_index') is not None:
             idx = state['reference_sample_index']
-            base_config = _causal_model_instance.df.iloc[idx].to_dict()
-            print(f"  基准配比：参考批次#{idx}")
+            df = _causal_model_instance.df
+            # 验证索引是否在范围内
+            if idx < 0 or idx >= len(df):
+                print(f"  ⚠️  参考索引 {idx} 超出范围 [0, {len(df)-1}]，使用默认中等强度样本")
+                df_28d = df[df['age'] == 28]
+                if len(df_28d) > 0:
+                    median_idx = (df_28d['concrete_compressive_strength'] - df_28d['concrete_compressive_strength'].median()).abs().idxmin()
+                    base_config = df.loc[median_idx].to_dict()
+                else:
+                    median_idx = (df['concrete_compressive_strength'] - df['concrete_compressive_strength'].median()).abs().idxmin()
+                    base_config = df.loc[median_idx].to_dict()
+                print(f"  基准配比：中等强度样本")
+            else:
+                base_config = df.iloc[idx].to_dict()
+                print(f"  基准配比：参考批次#{idx}")
         else:
             # 使用数据集中等强度样本作为基准
             df = _causal_model_instance.df
             df_28d = df[df['age'] == 28]
-            median_idx = (df_28d['concrete_compressive_strength'] - df_28d['concrete_compressive_strength'].median()).abs().idxmin()
-            base_config = df.iloc[median_idx].to_dict()
+            if len(df_28d) > 0:
+                median_idx = (df_28d['concrete_compressive_strength'] - df_28d['concrete_compressive_strength'].median()).abs().idxmin()
+                base_config = df.loc[median_idx].to_dict()
+            else:
+                median_idx = (df['concrete_compressive_strength'] - df['concrete_compressive_strength'].median()).abs().idxmin()
+                base_config = df.loc[median_idx].to_dict()
             print(f"  基准配比：中等强度样本")
         
         # 提取当前强度和目标提升
@@ -835,31 +886,74 @@ def optimizer_agent(state: CausalAnalysisState) -> dict:
             # 基于干预分析结果优化
             interventions = causal_results['interventions']
             
-            # 找出Top 3最有效的变量（选择置信区间不包含0的）
-            significant_interventions = [
-                i for i in interventions 
-                if i['confidence_interval'][0] * i['confidence_interval'][1] > 0  # 同号说明显著
-            ]
-            top_interventions = sorted(significant_interventions, 
-                                      key=lambda x: abs(x['causal_effect']), 
-                                      reverse=True)[:3]
+            # 检查用户是否指定了要调整的变量
+            specified_vars = state.get('specified_variables', [])
             
-            if not top_interventions:
-                # 如果没有显著变量，使用绝对效应最大的前3个
-                top_interventions = sorted(interventions, 
+            if specified_vars:
+                # 用户指定了变量，只使用这些变量
+                print(f"\n  🔧 使用用户指定的变量: {', '.join(specified_vars)}")
+                top_interventions = [
+                    i for i in interventions 
+                    if i['variable'] in specified_vars
+                ]
+                
+                # 按效应大小排序
+                top_interventions = sorted(top_interventions, 
+                                          key=lambda x: abs(x['causal_effect']), 
+                                          reverse=True)
+                
+                if not top_interventions:
+                    print(f"  ⚠️  指定的变量未在干预分析结果中找到，将使用Top 3")
+                    # 回退到Top 3
+                    significant_interventions = [
+                        i for i in interventions 
+                        if i['confidence_interval'][0] * i['confidence_interval'][1] > 0
+                    ]
+                    top_interventions = sorted(significant_interventions, 
+                                              key=lambda x: abs(x['causal_effect']), 
+                                              reverse=True)[:3]
+                    
+                    if not top_interventions:
+                        top_interventions = sorted(interventions, 
+                                                  key=lambda x: abs(x['causal_effect']), 
+                                                  reverse=True)[:3]
+            else:
+                # 用户未指定变量，自动选择Top 3最有效的变量
+                significant_interventions = [
+                    i for i in interventions 
+                    if i['confidence_interval'][0] * i['confidence_interval'][1] > 0  # 同号说明显著
+                ]
+                top_interventions = sorted(significant_interventions, 
                                           key=lambda x: abs(x['causal_effect']), 
                                           reverse=True)[:3]
+                
+                if not top_interventions:
+                    # 如果没有显著变量，使用绝对效应最大的前3个
+                    top_interventions = sorted(interventions, 
+                                              key=lambda x: abs(x['causal_effect']), 
+                                              reverse=True)[:3]
             
-            print(f"\n  Top 3 有效变量:")
+            print(f"\n  Top {len(top_interventions)} 有效变量:")
             for interv in top_interventions:
                 print(f"    • {interv['variable']}: 效应={interv['causal_effect']:+.4f}")
             
-            # 如果用户指定了目标提升，使用精确优化
-            if target_improvement is not None and target_improvement != 0:
+            # 如果用户指定了目标值或目标提升，使用精确优化
+            target_value = state.get('target_value')
+            
+            if target_value is not None:
+                # 用户指定了绝对目标值
+                print(f"\n  🎯 目标：强度达到 {target_value} MPa")
+                print(f"  使用迭代优化算法寻找最优配比...")
+                target_strength = float(target_value)
+            elif target_improvement is not None and target_improvement != 0:
+                # 用户指定了相对提升百分比
                 print(f"\n  🎯 目标：提升 {target_improvement}%")
                 print(f"  使用迭代优化算法寻找最优配比...")
-                
                 target_strength = base_strength * (1 + target_improvement / 100.0)
+            else:
+                target_strength = None
+            
+            if target_strength is not None:
                 
                 # 定义预测函数
                 def predict_strength(config):
