@@ -338,578 +338,95 @@ while (true) {
 
 ## 📊 配比参数范围
 
-### PredictRequest
-
-```typescript
-{
-  cement: number;              // 100-600 kg/m³
-  blast_furnace_slag: number;  // 0-400 kg/m³
-  fly_ash: number;             // 0-250 kg/m³
-  water: number;               // 100-300 kg/m³
-  superplasticizer: number;    // 0-40 kg/m³
-  coarse_aggregate: number;    // 700-1200 kg/m³
-  fine_aggregate: number;      // 500-1100 kg/m³
-  age: number;                 // 1-365 天
-}
-```
-
-### PredictResponse
-
-```typescript
-{
-  success: boolean;
-  predicted_strength: number;
-  confidence_interval: {
-    lower: number;
-    upper: number;
-  };
-  interpretation: string;
-  similar_samples: Array<{
-    cement: number;
-    water: number;
-    blast_furnace_slag: number;
-    actual_strength: number;
-    age: number;
-  }>;
-  feature_weights: {
-    [variable: string]: {
-      name: string;
-      weight_pct: number;
-      causal_effect: number;
-      score: number;
-      direction: "正向" | "负向";
-    };
-  };
-  error: string | null;
-}
-```
-
-### QueryRequest
-
-```typescript
-{
-  query: string;                    // 必填：自然语言查询
-  reference_sample_index?: number;  // 可选：参考批次索引
-  observed_config?: {               // 可选：用户输入的观测配比（优先级高于reference_sample_index）
-    cement: number;
-    blast_furnace_slag: number;
-    fly_ash: number;
-    water: number;
-    superplasticizer: number;
-    coarse_aggregate: number;
-    fine_aggregate: number;
-    age: number;
-  };
-  adjust_factors?: string[];        // 🔥 v2.3新增：可选，要调整的变量列表（如 ["cement", "fly_ash"]）
-  target_strength?: number;         // 🔥 v2.3新增：可选，目标强度值 (MPa)
-}
-```
-
-### AnalysisResponse
-
-```typescript
-{
-  success: boolean;
-  analysis_type: "attribution" | "intervention" | "counterfactual";
-  target_variable: string;
-  routing_reasoning: string;
-  causal_results: object;
-  analysis_summary: string;
-  recommendations: string;
-  // ⭐ 新增字段（目标导向优化时返回）
-  optimized_config?: {              // 优化后的配比方案
-    cement: number;
-    blast_furnace_slag: number;
-    fly_ash: number;
-    water: number;
-    superplasticizer: number;
-    coarse_aggregate: number;
-    fine_aggregate: number;
-    age: number;
-    concrete_compressive_strength: number;
-  };
-  predicted_strength?: number;       // 优化配比的预测强度
-  optimization_summary?: string;     // 优化摘要（包含目标提升vs实际提升）
-  error: string | null;
-}
-```
-
-### OptimizeRequest
-
-```typescript
-{
-  base_config: {                     // 基准配比（必填）
-    cement: number;                  // 100-600 kg/m³
-    blast_furnace_slag: number;      // 0-400 kg/m³
-    fly_ash: number;                 // 0-250 kg/m³
-    water: number;                   // 100-300 kg/m³
-    superplasticizer: number;        // 0-40 kg/m³
-    coarse_aggregate: number;        // 700-1200 kg/m³
-    fine_aggregate: number;          // 500-1100 kg/m³
-    age: number;                     // 1-365 天
-  };
-  target_strength: number;           // 目标强度 (20-80 MPa)
-  adjust_factors: string[];          // 允许调整的因素列表（如 ["cement", "fly_ash"]）
-}
-```
-
-### OptimizeResponse
-
-```typescript
-{
-  success: boolean;
-  base_config: {                     // 基准配比
-    cement: number;
-    blast_furnace_slag: number;
-    fly_ash: number;
-    water: number;
-    superplasticizer: number;
-    coarse_aggregate: number;
-    fine_aggregate: number;
-    age: number;
-  };
-  base_strength: number;             // 基准强度 (MPa)
-  optimized_config: {                // 优化后的配比
-    cement: number;
-    blast_furnace_slag: number;
-    fly_ash: number;
-    water: number;
-    superplasticizer: number;
-    coarse_aggregate: number;
-    fine_aggregate: number;
-    age: number;
-  };
-  predicted_strength: number;        // 优化后的预测强度 (MPa)
-  improvement_percent: number;       // 强度提升百分比
-  adjustments: Array<{               // 调整详情
-    variable: string;                // 变量名（英文）
-    name: string;                    // 变量名（中文）
-    old_value: number;               // 原始值
-    new_value: number;               // 优化值
-    change: number;                  // 变化量
-    change_percent: number;          // 变化百分比
-  }>;
-  recommendations: string;           // 工程建议
-  error: string | null;
-}
-```
+| 参数 | 中文名 | 范围 | 单位 |
+|------|--------|------|------|
+| `cement` | 水泥 | 100-600 | kg/m³ |
+| `blast_furnace_slag` | 高炉矿渣 | 0-400 | kg/m³ |
+| `fly_ash` | 粉煤灰 | 0-250 | kg/m³ |
+| `water` | 水 | 100-300 | kg/m³ |
+| `superplasticizer` | 减水剂 | 0-40 | kg/m³ |
+| `coarse_aggregate` | 粗骨料 | 700-1200 | kg/m³ |
+| `fine_aggregate` | 细骨料 | 500-1100 | kg/m³ |
+| `age` | 龄期 | 1-365 | 天 |
 
 ---
 
-## ⚠️ 错误处理
-
-### 标准错误响应
-
-```json
-{
-  "detail": "错误描述信息"
-}
-```
-
-### 常见错误码
-
-| 状态码 | 说明 |
-|--------|------|
-| 400 | 请求参数错误 |
-| 404 | 资源不存在 |
-| 500 | 服务器内部错误 |
-
-### 参数验证错误示例
-
-```json
-{
-  "detail": [
-    {
-      "loc": ["body", "cement"],
-      "msg": "ensure this value is greater than or equal to 100",
-      "type": "value_error.number.not_ge"
-    }
-  ]
-}
-```
-
----
-
-## 💻 使用示例
+## 💻 快速示例
 
 ### Python
 
 ```python
 import requests
 
-# 1. 强度预测
-response = requests.post(
-    "http://localhost:8000/api/predict",
-    json={
-        "cement": 380,
-        "blast_furnace_slag": 100,
-        "fly_ash": 50,
-        "water": 170,
-        "superplasticizer": 8,
-        "coarse_aggregate": 1000,
-        "fine_aggregate": 800,
-        "age": 28
-    }
-)
-result = response.json()
-print(f"预测强度: {result['predicted_strength']:.2f} MPa")
+# 1. 探索性分析
+response = requests.post("http://localhost:8000/api/analyze", 
+    json={"query": "如何提高强度？"})
 
-# 2. 因果分析 - 传统方式
-response = requests.post(
-    "http://localhost:8000/api/analyze",
+# 2. 精确优化
+response = requests.post("http://localhost:8000/api/analyze",
     json={
-        "query": "如何提高混凝土强度？"
-    }
-)
-result = response.json()
-print(f"分析类型: {result['analysis_type']}")
-print(f"建议: {result['recommendations']}")
-
-# 3. 🎯 目标导向优化（新功能）
-response = requests.post(
-    "http://localhost:8000/api/analyze",
-    json={
-        "query": "如果我想强度提升10%，应该如何调整配合比？",
-        "reference_sample_index": 100
-    }
-)
-result = response.json()
-print(f"目标提升: 10%")
-print(f"预测强度: {result['predicted_strength']:.2f} MPa")
-print(f"优化配比: {result['optimized_config']}")
-
-# 4. 基于用户配比的反事实分析（新功能）
-response = requests.post(
-    "http://localhost:8000/api/analyze",
-    json={
-        "query": "如果水用量从200降到150，强度会提升多少？",
+        "query": "如何达到45 MPa？",
         "observed_config": {
-            "cement": 164.8,
-            "blast_furnace_slag": 190.0,
-            "fly_ash": 148.0,
-            "water": 200.0,
-            "superplasticizer": 19.0,
-            "coarse_aggregate": 838.0,
-            "fine_aggregate": 741.0,
-            "age": 30
-        }
-    }
-)
-result = response.json()
-print(f"因果效应: {result['causal_results']['causal_effect']:.2f} MPa")
+            "cement": 300, "water": 185, "age": 28, ...
+        },
+        "adjust_factors": ["cement", "fly_ash"],
+        "target_strength": 45
+    })
 
-# 5. 🔥 数学运算支持（新功能）
-response = requests.post(
-    "http://localhost:8000/api/analyze",
-    json={
-        "query": "添加矿渣100 kg/m³，减少水泥50 kg/m³，强度会怎样？",
-        "reference_sample_index": 830
-    }
-)
-result = response.json()
-print(f"多变量运算效果: {result['analysis_summary']}")
-print(f"优化配比: {result['optimized_config']}")
-
-# 6. 🔥 流式响应（新功能）
-import json
-response = requests.post(
-    "http://localhost:8000/api/analyze_stream",
-    json={
-        "query": "如果我想强度提升10%，应该如何调整配合比？",
-        "reference_sample_index": 100
-    },
-    stream=True
-)
+# 3. 流式响应（推荐）
+response = requests.post("http://localhost:8000/api/analyze_stream",
+    json={"query": "提升10%应该怎么调？", "reference_sample_index": 100},
+    stream=True)
 
 for line in response.iter_lines():
-    if line:
-        line_str = line.decode('utf-8')
-        if line_str.startswith('data: '):
-            event = json.loads(line_str[6:])
-            if event['type'] == 'progress':
-                print(f"📡 {event['message']}")
-            elif event['type'] == 'result':
-                final_result = event['data']
-                print(f"✅ 分析完成: {final_result['predicted_strength']:.2f} MPa")
-
-# 7. 🎯 智能配比优化（新功能）
-response = requests.post(
-    "http://localhost:8000/api/optimize",
-    json={
-        "base_config": {
-            "cement": 300,
-            "blast_furnace_slag": 0,
-            "fly_ash": 0,
-            "water": 185,
-            "superplasticizer": 3,
-            "coarse_aggregate": 1050,
-            "fine_aggregate": 850,
-            "age": 28
-        },
-        "target_strength": 45,
-        "adjust_factors": ["cement", "fly_ash"]
-    }
-)
-result = response.json()
-print(f"基准强度: {result['base_strength']:.2f} MPa")
-print(f"优化强度: {result['predicted_strength']:.2f} MPa")
-print(f"提升: {result['improvement_percent']:.1f}%")
-for adj in result['adjustments']:
-    print(f"  {adj['name']}: {adj['old_value']:.1f} → {adj['new_value']:.1f} kg/m³")
-```
-
-### JavaScript (Fetch API)
-
-```javascript
-// 1. 强度预测
-const predictStrength = async () => {
-  const response = await fetch('http://localhost:8000/api/predict', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      cement: 380,
-      blast_furnace_slag: 100,
-      fly_ash: 50,
-      water: 170,
-      superplasticizer: 8,
-      coarse_aggregate: 1000,
-      fine_aggregate: 800,
-      age: 28
-    })
-  });
-  
-  const data = await response.json();
-  console.log(`预测强度: ${data.predicted_strength.toFixed(2)} MPa`);
-  return data;
-};
-
-// 2. 因果分析
-const analyzeQuery = async (query) => {
-  const response = await fetch('http://localhost:8000/api/analyze', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query })
-  });
-  
-  const data = await response.json();
-  console.log('分析结果:', data.analysis_summary);
-  return data;
-};
-
-// 3. 🎯 目标导向优化（新功能 - 自然语言方式）
-const optimizeWithTarget = async (targetImprovement) => {
-  const response = await fetch('http://localhost:8000/api/analyze', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      query: `如果我想强度提升${targetImprovement}%，应该如何调整配合比？`,
-      reference_sample_index: 100
-    })
-  });
-  
-  const data = await response.json();
-  console.log(`目标提升: ${targetImprovement}%`);
-  console.log(`预测强度: ${data.predicted_strength.toFixed(2)} MPa`);
-  console.log('优化配比:', data.optimized_config);
-  return data;
-};
-
-// 4. 🎯 智能配比优化（新功能 - GUI驱动方式）
-const optimizeConfig = async (baseConfig, targetStrength, adjustFactors) => {
-  const response = await fetch('http://localhost:8000/api/optimize', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      base_config: baseConfig,
-      target_strength: targetStrength,
-      adjust_factors: adjustFactors
-    })
-  });
-  
-  const data = await response.json();
-  console.log(`基准强度: ${data.base_strength.toFixed(2)} MPa`);
-  console.log(`优化强度: ${data.predicted_strength.toFixed(2)} MPa`);
-  console.log(`提升: ${data.improvement_percent.toFixed(1)}%`);
-  
-  console.log('\n调整详情:');
-  data.adjustments.forEach(adj => {
-    console.log(`  ${adj.name}: ${adj.old_value} → ${adj.new_value} kg/m³ (${adj.change_percent.toFixed(1)}%)`);
-  });
-  
-  return data;
-};
-
-// 使用示例
-optimizeConfig(
-  {
-    cement: 300,
-    blast_furnace_slag: 0,
-    fly_ash: 0,
-    water: 185,
-    superplasticizer: 3,
-    coarse_aggregate: 1050,
-    fine_aggregate: 850,
-    age: 28
-  },
-  45,
-  ['cement', 'fly_ash']
-);
+    if line and line.startswith(b'data: '):
+        event = json.loads(line[6:])
+        if event['type'] == 'progress':
+            print(event['message'])
 ```
 
 ### cURL
 
 ```bash
-# 1. 健康检查
-curl http://localhost:8000/health
-
-# 2. 强度预测
-curl -X POST http://localhost:8000/api/predict \
+# 探索性分析
+curl -X POST http://localhost:8000/api/analyze \
   -H "Content-Type: application/json" \
-  -d '{
-    "cement": 380,
-    "blast_furnace_slag": 100,
-    "fly_ash": 50,
-    "water": 170,
-    "superplasticizer": 8,
-    "coarse_aggregate": 1000,
-    "fine_aggregate": 800,
-    "age": 28
-  }'
+  -d '{"query": "如何提高强度？"}'
 
-# 3. 因果分析 - 传统方式
+# 精确优化
 curl -X POST http://localhost:8000/api/analyze \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "如何提高混凝土强度？"
+    "query": "如何达到45 MPa？",
+    "observed_config": {"cement": 300, "water": 185, "age": 28, ...},
+    "adjust_factors": ["cement", "fly_ash"],
+    "target_strength": 45
   }'
 
-# 4. 🎯 目标导向优化（新功能）
-curl -X POST http://localhost:8000/api/analyze \
+# 流式响应（加 -N 参数）
+curl -N -X POST http://localhost:8000/api/analyze_stream \
   -H "Content-Type: application/json" \
-  -d '{
-    "query": "如果我想强度提升10%，应该如何调整配合比？",
-    "reference_sample_index": 100
-  }'
-
-# 5. 基于用户配比的反事实分析（新功能）
-curl -X POST http://localhost:8000/api/analyze \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "如果水用量从200降到150，强度会提升多少？",
-    "observed_config": {
-      "cement": 164.8,
-      "blast_furnace_slag": 190.0,
-      "fly_ash": 148.0,
-      "water": 200.0,
-      "superplasticizer": 19.0,
-      "coarse_aggregate": 838.0,
-      "fine_aggregate": 741.0,
-      "age": 30
-    }
-  }'
-
-# 6. 🔥 数学运算支持（新功能）
-curl -X POST http://localhost:8000/api/analyze \
-  -H "Content-Type: application/json" \
-  -d '{
-    "query": "添加矿渣100 kg/m³，减少水泥50 kg/m³，强度会怎样？",
-    "reference_sample_index": 830
-  }'
-
-# 7. 🔥 流式响应（新功能）
-curl -X POST http://localhost:8000/api/analyze_stream \
-  -H "Content-Type: application/json" \
-  -N \
-  -d '{
-    "query": "如果我想强度提升10%，应该如何调整配合比？",
-    "reference_sample_index": 100
-  }'
-
-# 8. 🎯 智能配比优化（新功能）
-curl -X POST http://localhost:8000/api/optimize \
-  -H "Content-Type: application/json" \
-  -d '{
-    "base_config": {
-      "cement": 300,
-      "blast_furnace_slag": 0,
-      "fly_ash": 0,
-      "water": 185,
-      "superplasticizer": 3,
-      "coarse_aggregate": 1050,
-      "fine_aggregate": 850,
-      "age": 28
-    },
-    "target_strength": 45,
-    "adjust_factors": ["cement", "fly_ash"]
-  }'
-
-# 9. 获取参考批次
-curl http://localhost:8000/api/samples
+  -d '{"query": "提升10%", "reference_sample_index": 100}'
 ```
 
 ---
 
-## 🔬 技术说明
+## 🔬 技术架构
 
-### 预测方法
+### 核心技术
 
-本系统使用**因果干预采样 (Causal Interventional Sampling)** 方法进行预测：
-
-1. **因果图结构**: 9个节点（8个输入+1个输出），基于真实物理因果关系
-2. **干预操作**: 使用 do-operator 固定输入参数
-3. **采样预测**: 从因果模型采样100次，计算均值和置信区间
-4. **优势**: 
-   - 可解释性强（明确因果路径）
-   - 自动量化不确定性
-   - 支持反事实推理
-
-### 🎯 目标导向优化算法（新功能）
-
-实现**精确目标控制**的智能优化：
-
-1. **目标提取**: Router Agent从用户查询中提取目标提升百分比（如"提升10%"）
-2. **因果效应分析**: Causal Analyst计算各变量的因果效应（每单位变化对强度的影响）
-3. **二分搜索优化**: Optimizer Agent使用二分搜索算法寻找最优调整比例
-   - **搜索范围**: 0% ~ 50%
-   - **迭代次数**: 最多8次
-   - **精度控制**: 目标强度的±2%误差
-4. **调整策略**: 
-   - 正效应变量（cement, age）→ 增加
-   - 负效应变量（water）→ 减少
-5. **结果验证**: 使用因果模型预测优化配比的强度，确保达到目标
-
-**示例**：
-```
-用户要求: 提升10%
-迭代1: scale=0.250 → 预测44.9% ❌ 过高
-迭代2: scale=0.125 → 预测13.2% ✓ 接近
-迭代3: scale=0.062 → 预测10.1% ✅ 达标
-```
+- **因果推断**: 基于DoWhy和GCM，支持干预、归因、反事实分析
+- **智能体系统**: LangGraph多Agent协作（Router → Analyst → Optimizer → Advisor）
+- **优化算法**: 二分搜索 + 因果效应分析，精度±2%
+- **数据来源**: UCI真实数据集（1030样本，R²=0.99）
 
 ### 模型性能
 
-基于UCI真实数据集验证：
-
-| 指标 | 数值 | 评价 |
-|------|------|------|
-| R² | 0.9901 | 优秀 |
-| MAE | 1.28 MPa | 高精度 |
-| MAPE | 3.76% | 误差小 |
-
-### 数据来源
-
-- **数据集**: UCI Machine Learning Repository
-- **作者**: Yeh (1998)
-- **样本数**: 1030条
-- **变量数**: 9个（8个输入 + 1个输出）
+| 指标 | 数值 |
+|------|------|
+| R² | 0.9901 |
+| MAE | 1.28 MPa |
+| MAPE | 3.76% |
 
 ---
 
