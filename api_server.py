@@ -114,21 +114,25 @@ class QueryRequest(BaseModel):
     query: str = Field(..., description="用户自然语言查询")
     reference_sample_index: Optional[int] = Field(None, description="参考批次索引（反事实分析可选）")
     observed_config: Optional[ObservedConfig] = Field(None, description="观测配比数据（反事实分析可选，优先于reference_sample_index）")
+    adjust_factors: Optional[List[str]] = Field(None, description="要调整的因素列表（干预分析可选，如 ['cement', 'fly_ash']）")
+    target_strength: Optional[float] = Field(None, description="目标强度 (MPa，干预分析可选)")
     
     class Config:
         json_schema_extra = {
             "example": {
-                "query": "如果水用量从200降到150，强度会提升多少？",
+                "query": "如何通过调整水泥和粉煤灰使强度达到45 MPa？",
                 "observed_config": {
-                    "cement": 380,
-                    "blast_furnace_slag": 100,
-                    "fly_ash": 50,
-                    "water": 200,
-                    "superplasticizer": 8,
-                    "coarse_aggregate": 1000,
-                    "fine_aggregate": 800,
+                    "cement": 300,
+                    "blast_furnace_slag": 0,
+                    "fly_ash": 0,
+                    "water": 185,
+                    "superplasticizer": 3,
+                    "coarse_aggregate": 1050,
+                    "fine_aggregate": 850,
                     "age": 28
-                }
+                },
+                "adjust_factors": ["cement", "fly_ash"],
+                "target_strength": 45
             }
         }
 
@@ -144,6 +148,7 @@ class AnalysisResponse(BaseModel):
     optimized_config: Optional[Dict] = None  # 优化后的配比
     predicted_strength: Optional[float] = None  # 预测强度
     optimization_summary: Optional[str] = None  # 优化摘要
+    base_sample_info: Optional[Dict] = None  # 基准样本信息（当使用默认样本时）
     recommendations: str
     error: Optional[str] = None
 
@@ -265,9 +270,20 @@ async def root():
                 "health": "/health",
                 "samples": "/api/samples",
                 "analyze": "/api/analyze",
+                "test": "/test",
                 "docs": "/docs"
             }
         }
+
+
+@app.get("/test")
+async def test_page():
+    """测试工具页面 - API测试工具"""
+    test_file = Path(__file__).parent / "test_analyze_api.html"
+    if test_file.exists():
+        return FileResponse(test_file)
+    else:
+        raise HTTPException(status_code=404, detail="测试页面未找到")
 
 
 @app.get("/health")
@@ -400,6 +416,9 @@ async def analyze_query(request: QueryRequest):
     
     - **query**: 用户自然语言查询
     - **reference_sample_index**: 参考批次索引（可选，反事实分析建议提供）
+    - **observed_config**: 观测配比数据（可选，反事实分析时优先于reference_sample_index）
+    - **adjust_factors**: 要调整的变量列表（可选，干预分析时指定，如 ["cement", "fly_ash"]）
+    - **target_strength**: 目标强度（可选，干预分析时指定目标强度值，如 45.0）
     
     返回分析结果和决策建议
     """
@@ -407,6 +426,10 @@ async def analyze_query(request: QueryRequest):
         print(f"\n📥 收到查询: {request.query}")
         if request.reference_sample_index is not None:
             print(f"📍 参考批次: #{request.reference_sample_index}")
+        if request.adjust_factors:
+            print(f"🔧 指定调整变量: {', '.join(request.adjust_factors)}")
+        if request.target_strength:
+            print(f"🎯 目标强度: {request.target_strength} MPa")
         
         # 构建状态
         state_input = {
@@ -431,6 +454,14 @@ async def analyze_query(request: QueryRequest):
             state_input["reference_sample_index"] = request.reference_sample_index
             print(f"📍 使用参考批次索引: {request.reference_sample_index}")
         
+        # 如果提供了调整变量列表，添加到状态中
+        if request.adjust_factors:
+            state_input["specified_variables"] = request.adjust_factors
+        
+        # 如果提供了目标强度，添加到状态中
+        if request.target_strength:
+            state_input["target_value"] = request.target_strength
+        
         # 执行分析
         result = agent_graph.invoke(state_input)
         
@@ -445,6 +476,7 @@ async def analyze_query(request: QueryRequest):
             optimized_config=result.get('optimized_config'),
             predicted_strength=result.get('predicted_strength'),
             optimization_summary=result.get('optimization_summary'),
+            base_sample_info=result.get('base_sample_info'),
             recommendations=result.get('recommendations', ''),
             error=result.get('error')
         )
@@ -464,6 +496,12 @@ async def analyze_query_stream(request: QueryRequest):
     执行因果分析（流式响应，实时推送进度）
     
     使用Server-Sent Events (SSE)推送分析过程
+    
+    - **query**: 用户自然语言查询
+    - **reference_sample_index**: 参考批次索引（可选）
+    - **observed_config**: 观测配比数据（可选）
+    - **adjust_factors**: 要调整的变量列表（可选，如 ["cement", "fly_ash"]）
+    - **target_strength**: 目标强度（可选，如 45.0）
     """
     async def event_generator():
         try:
@@ -495,6 +533,17 @@ async def analyze_query_stream(request: QueryRequest):
             elif request.reference_sample_index is not None:
                 state_input["reference_sample_index"] = request.reference_sample_index
                 yield f"data: {json.dumps({'type': 'progress', 'message': f'📍 使用参考批次 #{request.reference_sample_index}'}, ensure_ascii=False)}\n\n"
+            
+            # 如果提供了调整变量列表，添加到状态中
+            if request.adjust_factors:
+                state_input["specified_variables"] = request.adjust_factors
+                adjust_vars_str = ", ".join(request.adjust_factors)
+                yield f"data: {json.dumps({'type': 'progress', 'message': f'🔧 指定调整变量: {adjust_vars_str}'}, ensure_ascii=False)}\n\n"
+            
+            # 如果提供了目标强度，添加到状态中
+            if request.target_strength:
+                state_input["target_value"] = request.target_strength
+                yield f"data: {json.dumps({'type': 'progress', 'message': f'🎯 目标强度: {request.target_strength} MPa'}, ensure_ascii=False)}\n\n"
             
             await asyncio.sleep(0.1)
             
@@ -541,6 +590,7 @@ async def analyze_query_stream(request: QueryRequest):
                 "optimized_config": result.get('optimized_config'),
                 "predicted_strength": result.get('predicted_strength'),
                 "optimization_summary": result.get('optimization_summary'),
+                "base_sample_info": result.get('base_sample_info'),
                 "recommendations": result.get('recommendations', ''),
                 "error": result.get('error')
             }
@@ -896,8 +946,18 @@ async def optimize_config(request: OptimizeRequest):
         print("📊 步骤3：使用迭代优化算法寻找最优配比...")
         
         def predict_strength_for_config(config):
-            """给定配比，预测强度"""
-            intervention_funcs = {k: (lambda v: lambda x: v)(v) for k, v in config.items()}
+            """给定配比，预测强度（与/api/predict使用相同方法）"""
+            # 明确指定所有9个变量，确保与/api/predict和optimizer_agent保持一致
+            intervention_funcs = {
+                'cement': lambda x: config.get('cement', 280),
+                'blast_furnace_slag': lambda x: config.get('blast_furnace_slag', 0),
+                'fly_ash': lambda x: config.get('fly_ash', 0),
+                'water': lambda x: config.get('water', 180),
+                'superplasticizer': lambda x: config.get('superplasticizer', 0),
+                'coarse_aggregate': lambda x: config.get('coarse_aggregate', 1000),
+                'fine_aggregate': lambda x: config.get('fine_aggregate', 800),
+                'age': lambda x: config.get('age', 28)
+            }
             samples = gcm.interventional_samples(
                 causal_model.causal_model,
                 intervention_funcs,
@@ -1046,12 +1106,18 @@ if __name__ == "__main__":
     print("🌐 启动 FastAPI 服务器")
     print("="*80)
     print()
-    print("API 文档:")
+    print("🏠 Web 界面:")
+    print("  • 主界面: http://localhost:8000/")
+    print("  • API测试工具: http://localhost:8000/test")
+    print()
+    print("📚 API 文档:")
     print("  • Swagger UI: http://localhost:8000/docs")
     print("  • ReDoc: http://localhost:8000/redoc")
     print()
-    print("主要端点:")
+    print("🔌 主要端点:")
     print("  • POST /api/analyze - 执行因果分析")
+    print("  • POST /api/predict - 预测强度")
+    print("  • POST /api/optimize - 优化配比")
     print("  • GET  /api/samples - 获取参考批次")
     print("  • GET  /api/variables - 获取可用变量")
     print("  • GET  /api/graph - 获取因果图结构")

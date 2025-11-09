@@ -87,3 +87,4 @@ print(f"  预测强度: {result.get('predicted_strength', 0):.2f} MPa")
 print("\n✅ 测试完成！")
 
 
+

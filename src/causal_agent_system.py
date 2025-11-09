@@ -60,6 +60,7 @@ class CausalAnalysisState(TypedDict):
     optimized_config: dict             # 优化后的配比建议
     predicted_strength: float          # 预测的强度
     optimization_summary: str          # 优化摘要
+    base_sample_info: dict             # 基准样本信息（当使用默认样本时）
     
     # Advisor 输出
     recommendations: str               # 决策建议
@@ -77,6 +78,31 @@ _causal_model_instance: Optional[ConcreteAggregateCausalModel] = None
 
 # 模型缓存路径
 MODEL_CACHE_FILE = Path("models/causal_model.pkl")
+
+
+def build_sample_info_dict(sample: pd.Series, source: str = "默认") -> dict:
+    """
+    构建样本信息字典
+    
+    Args:
+        sample: pandas Series，包含样本的所有字段
+        source: 样本来源说明（如"默认"、"用户选择"等）
+    
+    Returns:
+        包含样本完整信息的字典
+    """
+    return {
+        "source": source,
+        "cement": float(sample['cement']),
+        "blast_furnace_slag": float(sample['blast_furnace_slag']),
+        "fly_ash": float(sample['fly_ash']),
+        "water": float(sample['water']),
+        "superplasticizer": float(sample['superplasticizer']),
+        "coarse_aggregate": float(sample['coarse_aggregate']),
+        "fine_aggregate": float(sample['fine_aggregate']),
+        "age": int(sample['age']),
+        "concrete_compressive_strength": float(sample['concrete_compressive_strength'])
+    }
 
 
 def initialize_causal_model(df: pd.DataFrame = None, force_retrain: bool = False) -> ConcreteAggregateCausalModel:
@@ -387,8 +413,19 @@ def router_agent(state: CausalAnalysisState) -> dict:
     1. 理解自然语言查询的意图
     2. 识别查询类型（归因/干预/反事实）
     3. 提取关键信息（目标变量、干预参数等）
+    
+    注意：如果 state 中已经有 specified_variables 或 target_value，优先使用它们
     """
     print("\n🔍 Router Agent 正在分析您的问题...")
+    
+    # 检查是否已经从API传入了参数
+    api_specified_variables = state.get('specified_variables')
+    api_target_value = state.get('target_value')
+    
+    if api_specified_variables:
+        print(f"  📌 检测到API传入的调整变量: {', '.join(api_specified_variables)}")
+    if api_target_value:
+        print(f"  📌 检测到API传入的目标值: {api_target_value}")
     
     # 使用 LLM 理解用户查询
     llm = ChatOpenAI(
@@ -523,12 +560,17 @@ def router_agent(state: CausalAnalysisState) -> dict:
         print(f"\n📋 分析类型: {parsed['analysis_type']}")
         print(f"🎯 目标变量: {parsed['target_variable']}")
         print(f"💡 推理: {parsed['reasoning']}")
+        
+        # 优先使用API传入的参数，否则使用LLM解析的结果
+        final_target_value = api_target_value if api_target_value is not None else parsed.get('target_value')
+        final_specified_variables = api_specified_variables if api_specified_variables else parsed.get('specified_variables', [])
+        
         if parsed.get('target_improvement'):
             print(f"🎯 目标提升: {parsed['target_improvement']}%")
-        if parsed.get('target_value'):
-            print(f"🎯 目标值: {parsed['target_value']}")
-        if parsed.get('specified_variables'):
-            print(f"🔧 指定调整变量: {', '.join(parsed['specified_variables'])}")
+        if final_target_value:
+            print(f"🎯 目标值: {final_target_value}")
+        if final_specified_variables:
+            print(f"🔧 指定调整变量: {', '.join(final_specified_variables)}")
         
         return {
             "analysis_type": parsed['analysis_type'],
@@ -536,18 +578,20 @@ def router_agent(state: CausalAnalysisState) -> dict:
             "routing_reasoning": parsed['reasoning'],
             "intervention_params": parsed.get('extracted_info', {}),
             "target_improvement": parsed.get('target_improvement'),
-            "target_value": parsed.get('target_value'),
-            "specified_variables": parsed.get('specified_variables', [])
+            "target_value": final_target_value,
+            "specified_variables": final_specified_variables
         }
         
     except Exception as e:
         print(f"⚠️ 路由解析失败: {e}")
-        # 默认使用干预分析
+        # 默认使用干预分析，并使用API传入的参数（如果有）
         return {
             "analysis_type": "intervention",
             "target_variable": "concrete_compressive_strength",
             "routing_reasoning": "使用默认配置",
-            "intervention_params": {}
+            "intervention_params": {},
+            "target_value": api_target_value,
+            "specified_variables": api_specified_variables if api_specified_variables else []
         }
 
 
@@ -736,8 +780,40 @@ def causal_analyst_agent(state: CausalAnalysisState) -> dict:
                     if sample_index < 0 or sample_index >= len(df):
                         print(f"  ⚠️  参考索引 {sample_index} 超出范围 [0, {len(df)-1}]，使用默认样本")
                         sample_index = min(100, len(df) - 1)  # 使用默认样本，确保不超出范围
+                        
+                        # 显示默认样本的完整信息
+                        sample = df.iloc[sample_index]
+                        print(f"\n  📋 默认基准样本详情:")
+                        print(f"    • 水泥: {sample['cement']:.1f} kg/m³")
+                        print(f"    • 高炉矿渣: {sample['blast_furnace_slag']:.1f} kg/m³")
+                        print(f"    • 粉煤灰: {sample['fly_ash']:.1f} kg/m³")
+                        print(f"    • 水: {sample['water']:.1f} kg/m³")
+                        print(f"    • 减水剂: {sample['superplasticizer']:.1f} kg/m³")
+                        print(f"    • 粗骨料: {sample['coarse_aggregate']:.1f} kg/m³")
+                        print(f"    • 细骨料: {sample['fine_aggregate']:.1f} kg/m³")
+                        print(f"    • 龄期: {sample['age']:.0f} 天")
+                        print(f"    • 原始强度: {sample['concrete_compressive_strength']:.2f} MPa")
+                        
+                        # 保存基准样本信息到state
+                        state['base_sample_info'] = build_sample_info_dict(sample, source="默认样本（索引{}）".format(sample_index))
                     else:
                         print(f"  使用用户选择的参考批次: 索引 {sample_index}")
+                        
+                        # 显示参考样本的完整信息
+                        sample = df.iloc[sample_index]
+                        print(f"\n  📋 参考样本详情:")
+                        print(f"    • 水泥: {sample['cement']:.1f} kg/m³")
+                        print(f"    • 高炉矿渣: {sample['blast_furnace_slag']:.1f} kg/m³")
+                        print(f"    • 粉煤灰: {sample['fly_ash']:.1f} kg/m³")
+                        print(f"    • 水: {sample['water']:.1f} kg/m³")
+                        print(f"    • 减水剂: {sample['superplasticizer']:.1f} kg/m³")
+                        print(f"    • 粗骨料: {sample['coarse_aggregate']:.1f} kg/m³")
+                        print(f"    • 细骨料: {sample['fine_aggregate']:.1f} kg/m³")
+                        print(f"    • 龄期: {sample['age']:.0f} 天")
+                        print(f"    • 原始强度: {sample['concrete_compressive_strength']:.2f} MPa")
+                        
+                        # 保存基准样本信息到state
+                        state['base_sample_info'] = build_sample_info_dict(sample, source="用户指定样本（索引{}）".format(sample_index))
                 # 如果提取到了原始值，尝试找到接近该值的样本
                 elif original_value is not None and _causal_model_instance is not None:
                     # 使用第一个干预变量找到最接近的样本
@@ -746,12 +822,44 @@ def causal_analyst_agent(state: CausalAnalysisState) -> dict:
                         closest_idx = (df[first_var] - original_value).abs().idxmin()
                         sample_index = int(closest_idx)
                         print(f"  找到最接近原始值 {original_value} 的样本: 索引 {sample_index}")
+                        
+                        # 显示找到的样本的完整信息
+                        sample = df.iloc[sample_index]
+                        print(f"\n  📋 基准样本详情:")
+                        print(f"    • 水泥: {sample['cement']:.1f} kg/m³")
+                        print(f"    • 高炉矿渣: {sample['blast_furnace_slag']:.1f} kg/m³")
+                        print(f"    • 粉煤灰: {sample['fly_ash']:.1f} kg/m³")
+                        print(f"    • 水: {sample['water']:.1f} kg/m³")
+                        print(f"    • 减水剂: {sample['superplasticizer']:.1f} kg/m³")
+                        print(f"    • 粗骨料: {sample['coarse_aggregate']:.1f} kg/m³")
+                        print(f"    • 细骨料: {sample['fine_aggregate']:.1f} kg/m³")
+                        print(f"    • 龄期: {sample['age']:.0f} 天")
+                        print(f"    • 原始强度: {sample['concrete_compressive_strength']:.2f} MPa")
+                        
+                        # 保存基准样本信息到state
+                        state['base_sample_info'] = build_sample_info_dict(sample, source="自动匹配样本（索引{}）".format(sample_index))
                 else:
                     sample_index = min(100, len(df) - 1)  # 默认样本，确保不超出范围
                     print(f"  使用默认样本索引: {sample_index}")
+                    
+                    # 获取并显示默认样本的完整信息
+                    sample = df.iloc[sample_index]
+                    print(f"\n  📋 默认基准样本详情:")
+                    print(f"    • 水泥: {sample['cement']:.1f} kg/m³")
+                    print(f"    • 高炉矿渣: {sample['blast_furnace_slag']:.1f} kg/m³")
+                    print(f"    • 粉煤灰: {sample['fly_ash']:.1f} kg/m³")
+                    print(f"    • 水: {sample['water']:.1f} kg/m³")
+                    print(f"    • 减水剂: {sample['superplasticizer']:.1f} kg/m³")
+                    print(f"    • 粗骨料: {sample['coarse_aggregate']:.1f} kg/m³")
+                    print(f"    • 细骨料: {sample['fine_aggregate']:.1f} kg/m³")
+                    print(f"    • 龄期: {sample['age']:.0f} 天")
+                    print(f"    • 原始强度: {sample['concrete_compressive_strength']:.2f} MPa")
+                    
+                    # 保存基准样本信息到state
+                    state['base_sample_info'] = build_sample_info_dict(sample, source="默认样本（索引{})".format(sample_index))
                 
-                print(f"  干预变量: {', '.join(interventions.keys())}")
-                print(f"  干预值: {interventions}")
+                print(f"\n  🔧 干预变量: {', '.join(interventions.keys())}")
+                print(f"  🎯 干预值: {interventions}")
                 
                 result = counterfactual_analysis_tool.invoke({
                     "sample_index": sample_index,
@@ -857,11 +965,57 @@ def optimizer_agent(state: CausalAnalysisState) -> dict:
                     median_idx = (df['concrete_compressive_strength'] - df['concrete_compressive_strength'].median()).abs().idxmin()
                     base_config = df.loc[median_idx].to_dict()
                 print(f"  基准配比：中等强度样本")
+                
+                # 显示默认样本的完整信息
+                print(f"\n  📋 默认基准样本详情:")
+                print(f"    • 水泥: {base_config['cement']:.1f} kg/m³")
+                print(f"    • 高炉矿渣: {base_config['blast_furnace_slag']:.1f} kg/m³")
+                print(f"    • 粉煤灰: {base_config['fly_ash']:.1f} kg/m³")
+                print(f"    • 水: {base_config['water']:.1f} kg/m³")
+                print(f"    • 减水剂: {base_config['superplasticizer']:.1f} kg/m³")
+                print(f"    • 粗骨料: {base_config['coarse_aggregate']:.1f} kg/m³")
+                print(f"    • 细骨料: {base_config['fine_aggregate']:.1f} kg/m³")
+                print(f"    • 龄期: {base_config['age']:.0f} 天")
+                print(f"    • 原始强度: {base_config['concrete_compressive_strength']:.2f} MPa")
+                
+                # 保存基准样本信息到state
+                state['base_sample_info'] = build_sample_info_dict(pd.Series(base_config), source="默认样本（中等强度）")
             else:
                 base_config = df.iloc[idx].to_dict()
                 print(f"  基准配比：参考批次#{idx}")
+                
+                # 显示参考样本的完整信息
+                print(f"\n  📋 参考样本详情:")
+                print(f"    • 水泥: {base_config['cement']:.1f} kg/m³")
+                print(f"    • 高炉矿渣: {base_config['blast_furnace_slag']:.1f} kg/m³")
+                print(f"    • 粉煤灰: {base_config['fly_ash']:.1f} kg/m³")
+                print(f"    • 水: {base_config['water']:.1f} kg/m³")
+                print(f"    • 减水剂: {base_config['superplasticizer']:.1f} kg/m³")
+                print(f"    • 粗骨料: {base_config['coarse_aggregate']:.1f} kg/m³")
+                print(f"    • 细骨料: {base_config['fine_aggregate']:.1f} kg/m³")
+                print(f"    • 龄期: {base_config['age']:.0f} 天")
+                print(f"    • 原始强度: {base_config['concrete_compressive_strength']:.2f} MPa")
+                
+                # 保存基准样本信息到state
+                state['base_sample_info'] = build_sample_info_dict(pd.Series(base_config), source="用户指定样本（索引{}）".format(idx))
         else:
-            # 使用数据集中等强度样本作为基准
+            # 没有提供基准配比或参考索引
+            # 检查是否有明确的目标值或目标提升
+            target_value = state.get('target_value')
+            target_improvement = state.get('target_improvement')
+            
+            # 如果没有明确目标，说明是纯探索性问题，不进行优化
+            if target_value is None and target_improvement is None:
+                print(f"  ℹ️  未提供基准配比或参考索引，且无明确优化目标")
+                print(f"  → 这是一个探索性问题，只返回因素分析结果")
+                print(f"  （如需具体优化配比，请提供基准配比或参考索引）")
+                return {
+                    "optimized_config": None,
+                    "predicted_strength": None,
+                    "optimization_summary": ""
+                }
+            
+            # 如果有明确目标，使用默认中等强度样本作为基准
             df = _causal_model_instance.df
             df_28d = df[df['age'] == 28]
             if len(df_28d) > 0:
@@ -870,10 +1024,25 @@ def optimizer_agent(state: CausalAnalysisState) -> dict:
             else:
                 median_idx = (df['concrete_compressive_strength'] - df['concrete_compressive_strength'].median()).abs().idxmin()
                 base_config = df.loc[median_idx].to_dict()
-            print(f"  基准配比：中等强度样本")
+            
+            print(f"  基准配比：默认中等强度样本（因提供了明确目标）")
+            print(f"\n  📋 默认基准样本详情:")
+            print(f"    • 水泥: {base_config['cement']:.1f} kg/m³")
+            print(f"    • 高炉矿渣: {base_config['blast_furnace_slag']:.1f} kg/m³")
+            print(f"    • 粉煤灰: {base_config['fly_ash']:.1f} kg/m³")
+            print(f"    • 水: {base_config['water']:.1f} kg/m³")
+            print(f"    • 减水剂: {base_config['superplasticizer']:.1f} kg/m³")
+            print(f"    • 粗骨料: {base_config['coarse_aggregate']:.1f} kg/m³")
+            print(f"    • 细骨料: {base_config['fine_aggregate']:.1f} kg/m³")
+            print(f"    • 龄期: {base_config['age']:.0f} 天")
+            print(f"    • 原始强度: {base_config['concrete_compressive_strength']:.2f} MPa")
+            
+            # 保存基准样本信息到state
+            state['base_sample_info'] = build_sample_info_dict(pd.Series(base_config), source="默认样本（中等强度）")
         
         # 提取当前强度和目标提升
         base_strength = base_config.get('concrete_compressive_strength', 35.0)
+        # target_improvement 已在前面获取，这里直接使用 state
         target_improvement = state.get('target_improvement')  # 百分比，如10表示提升10%
         
         # 从干预分析结果获取最有效的变量
@@ -1040,47 +1209,64 @@ def optimizer_agent(state: CausalAnalysisState) -> dict:
                     if var in optimized_config:
                         old_val = base_config[var]
                         new_val = optimized_config[var]
-                        change_pct = ((new_val - old_val) / old_val) * 100
-                        print(f"    • {var}: {old_val:.1f} → {new_val:.1f} ({change_pct:+.1f}%)")
+                        if old_val != 0:
+                            change_pct = ((new_val - old_val) / old_val) * 100
+                            print(f"    • {var}: {old_val:.1f} → {new_val:.1f} ({change_pct:+.1f}%)")
+                        else:
+                            change = new_val - old_val
+                            print(f"    • {var}: {old_val:.1f} → {new_val:.1f} ({change:+.1f} kg/m³)")
             
             else:
-                # 没有指定目标，使用默认10%调整
-                print(f"\n  使用默认调整策略（每个变量±10%）")
-                for interv in top_interventions:
-                    var = interv['variable']
-                    effect = interv['causal_effect']
+                # 没有指定目标 - 检查用户意图
+                user_query = state.get('user_query', '').lower()
+                is_pure_prediction = any(keyword in user_query for keyword in ['预测', '预报', '强度是多少', '多少mpa', '能达到'])
+                
+                # 如果是纯预测查询（没有"优化"、"提升"、"改进"等词），则只预测不优化
+                if is_pure_prediction and not any(keyword in user_query for keyword in ['优化', '提升', '改进', '调整', '增加', '降低']):
+                    print(f"\n  ℹ️  检测到纯预测查询，返回当前配比的预测强度")
+                    print(f"  （如需优化配比，请在查询中明确指出目标或调整需求）")
                     
-                    if var in optimized_config:
-                        current_val = optimized_config[var]
+                    # 直接返回基准强度预测，不进行优化
+                    optimized_config = base_config.copy()
+                    predicted_strength = base_strength
+                else:
+                    # 用户想要优化但没有指定具体目标，使用默认10%调整
+                    print(f"\n  使用默认调整策略（每个变量±10%）")
+                    for interv in top_interventions:
+                        var = interv['variable']
+                        effect = interv['causal_effect']
                         
-                        if effect > 0:
-                            new_val = current_val * 1.1
-                            print(f"    • {var}: {current_val:.1f} → {new_val:.1f} (↑10%, 效应: +{effect:.3f})")
-                        else:
-                            new_val = current_val * 0.9
-                            print(f"    • {var}: {current_val:.1f} → {new_val:.1f} (↓10%, 效应: {effect:.3f})")
-                        
-                        optimized_config[var] = new_val
-                
-                # 预测优化后的强度
-                intervention_funcs = {
-                    'cement': lambda x: optimized_config.get('cement', 280),
-                    'blast_furnace_slag': lambda x: optimized_config.get('blast_furnace_slag', 0),
-                    'fly_ash': lambda x: optimized_config.get('fly_ash', 0),
-                    'water': lambda x: optimized_config.get('water', 180),
-                    'superplasticizer': lambda x: optimized_config.get('superplasticizer', 0),
-                    'coarse_aggregate': lambda x: optimized_config.get('coarse_aggregate', 1000),
-                    'fine_aggregate': lambda x: optimized_config.get('fine_aggregate', 800),
-                    'age': lambda x: optimized_config.get('age', 28)
-                }
-                
-                samples = gcm.interventional_samples(
-                    _causal_model_instance.causal_model,
-                    intervention_funcs,
-                    num_samples_to_draw=100
-                )
-                
-                predicted_strength = float(samples['concrete_compressive_strength'].mean())
+                        if var in optimized_config:
+                            current_val = optimized_config[var]
+                            
+                            if effect > 0:
+                                new_val = current_val * 1.1
+                                print(f"    • {var}: {current_val:.1f} → {new_val:.1f} (↑10%, 效应: +{effect:.3f})")
+                            else:
+                                new_val = current_val * 0.9
+                                print(f"    • {var}: {current_val:.1f} → {new_val:.1f} (↓10%, 效应: {effect:.3f})")
+                            
+                            optimized_config[var] = new_val
+                    
+                    # 预测优化后的强度
+                    intervention_funcs = {
+                        'cement': lambda x: optimized_config.get('cement', 280),
+                        'blast_furnace_slag': lambda x: optimized_config.get('blast_furnace_slag', 0),
+                        'fly_ash': lambda x: optimized_config.get('fly_ash', 0),
+                        'water': lambda x: optimized_config.get('water', 180),
+                        'superplasticizer': lambda x: optimized_config.get('superplasticizer', 0),
+                        'coarse_aggregate': lambda x: optimized_config.get('coarse_aggregate', 1000),
+                        'fine_aggregate': lambda x: optimized_config.get('fine_aggregate', 800),
+                        'age': lambda x: optimized_config.get('age', 28)
+                    }
+                    
+                    samples = gcm.interventional_samples(
+                        _causal_model_instance.causal_model,
+                        intervention_funcs,
+                        num_samples_to_draw=100
+                    )
+                    
+                    predicted_strength = float(samples['concrete_compressive_strength'].mean())
         
         else:
             # 反事实分析：应用干预值到配比
@@ -1116,7 +1302,7 @@ def optimizer_agent(state: CausalAnalysisState) -> dict:
             
             predicted_strength = float(samples['concrete_compressive_strength'].mean())
         
-        strength_improvement = ((predicted_strength - base_strength) / base_strength) * 100
+        strength_improvement = ((predicted_strength - base_strength) / base_strength) * 100 if base_strength != 0 else 0
         
         print(f"\n  ✓ 基准强度: {base_strength:.2f} MPa")
         print(f"  ✓ 预测强度: {predicted_strength:.2f} MPa")

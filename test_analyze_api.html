@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>因果分析 API 测试工具</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            padding: 30px;
+        }
+        
+        .panel {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 25px;
+        }
+        
+        .panel h2 {
+            font-size: 20px;
+            margin-bottom: 20px;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+            font-size: 14px;
+        }
+        
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        
+        .checkbox-group {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-top: 8px;
+        }
+        
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .checkbox-item input[type="checkbox"] {
+            width: auto;
+            cursor: pointer;
+        }
+        
+        .checkbox-item label {
+            margin-bottom: 0 !important;
+            cursor: pointer;
+            font-weight: normal !important;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 25px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 14px 28px;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+        
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #218838;
+        }
+        
+        .result-panel {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 25px;
+            min-height: 400px;
+        }
+        
+        .result-content {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 15px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        
+        .result-item {
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .result-item:last-child {
+            border-bottom: none;
+        }
+        
+        .result-item h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        
+        .result-item pre {
+            background: #f5f5f5;
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #667eea;
+        }
+        
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s steps(3, end) infinite;
+        }
+        
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+        
+        .error {
+            background: #fff3cd;
+            border: 2px solid #ffc107;
+            border-radius: 8px;
+            padding: 15px;
+            color: #856404;
+            margin-top: 15px;
+        }
+        
+        .success {
+            background: #d4edda;
+            border: 2px solid #28a745;
+            border-radius: 8px;
+            padding: 15px;
+            color: #155724;
+            margin-top: 15px;
+        }
+        
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .config-item {
+            background: #f8f9fa;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        
+        .config-item strong {
+            color: #667eea;
+        }
+        
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 14px;
+            font-weight: 600;
+            color: #666;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+        
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧪 因果分析 API 测试工具</h1>
+            <p>测试 /api/analyze 端点 - 支持归因、干预、反事实分析</p>
+        </div>
+        
+        <div class="content">
+            <!-- 左侧：输入表单 -->
+            <div class="panel">
+                <h2>📝 配置请求参数</h2>
+                
+                <div class="info-box">
+                    💡 <strong>提示：</strong>所有参数均为可选（除了query）。根据您的查询类型选择合适的参数。
+                </div>
+                
+                <!-- 基础参数 -->
+                <div class="form-group">
+                    <label>🔍 用户查询 *</label>
+                    <textarea id="query" placeholder="例如：如何通过调整水泥和粉煤灰使强度达到45 MPa？"></textarea>
+                </div>
+                
+                <!-- 标签切换 -->
+                <div class="tabs">
+                    <button class="tab active" onclick="switchTab('basic')">基础参数</button>
+                    <button class="tab" onclick="switchTab('config')">观测配比</button>
+                    <button class="tab" onclick="switchTab('advanced')">高级选项</button>
+                </div>
+                
+                <!-- 基础参数标签 -->
+                <div id="basic-tab" class="tab-content active">
+                    <div class="form-group">
+                        <label>🎯 目标强度 (MPa)</label>
+                        <input type="number" id="targetStrength" placeholder="例如：45" step="0.1">
+                        <small style="color: #666; font-size: 12px;">用于干预分析，指定期望达到的强度值</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>🔧 调整变量（可多选）</label>
+                        <div class="checkbox-group">
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="adj_cement" value="cement">
+                                <label for="adj_cement">水泥</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="adj_bfs" value="blast_furnace_slag">
+                                <label for="adj_bfs">高炉矿渣</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="adj_fly" value="fly_ash">
+                                <label for="adj_fly">粉煤灰</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="adj_water" value="water">
+                                <label for="adj_water">水</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="adj_sp" value="superplasticizer">
+                                <label for="adj_sp">减水剂</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="adj_ca" value="coarse_aggregate">
+                                <label for="adj_ca">粗骨料</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="adj_fa" value="fine_aggregate">
+                                <label for="adj_fa">细骨料</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="adj_age" value="age">
+                                <label for="adj_age">龄期</label>
+                            </div>
+                        </div>
+                        <small style="color: #666; font-size: 12px;">用于干预分析，指定允许调整的变量</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>📍 参考批次索引</label>
+                        <input type="number" id="refIndex" placeholder="例如：100" min="0" max="1029">
+                        <small style="color: #666; font-size: 12px;">用于反事实分析，选择一个真实样本作为基准（0-1029）</small>
+                    </div>
+                </div>
+                
+                <!-- 观测配比标签 -->
+                <div id="config-tab" class="tab-content">
+                    <div class="info-box">
+                        📋 输入一个完整的混凝土配比作为基准。用于反事实分析或干预分析的起点。
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>水泥 (kg/m³)</label>
+                            <input type="number" id="cement" placeholder="280" step="1">
+                        </div>
+                        <div class="form-group">
+                            <label>高炉矿渣 (kg/m³)</label>
+                            <input type="number" id="bfs" placeholder="0" step="1">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>粉煤灰 (kg/m³)</label>
+                            <input type="number" id="flyAsh" placeholder="0" step="1">
+                        </div>
+                        <div class="form-group">
+                            <label>水 (kg/m³)</label>
+                            <input type="number" id="water" placeholder="180" step="1">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>高效减水剂 (kg/m³)</label>
+                            <input type="number" id="sp" placeholder="0" step="0.1">
+                        </div>
+                        <div class="form-group">
+                            <label>粗骨料 (kg/m³)</label>
+                            <input type="number" id="ca" placeholder="1000" step="1">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>细骨料 (kg/m³)</label>
+                            <input type="number" id="fa" placeholder="800" step="1">
+                        </div>
+                        <div class="form-group">
+                            <label>龄期 (天)</label>
+                            <input type="number" id="age" placeholder="28" min="1" max="365">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 高级选项标签 -->
+                <div id="advanced-tab" class="tab-content">
+                    <div class="form-group">
+                        <label>🌐 API 端点</label>
+                        <input type="text" id="apiUrl" value="http://localhost:8000/api/analyze">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>⏱️ 请求超时 (秒)</label>
+                        <input type="number" id="timeout" value="180" min="10" max="600">
+                        <small style="color: #666; font-size: 12px;">干预分析通常需要1-3分钟，建议设置180秒以上</small>
+                    </div>
+                </div>
+                
+                <div class="button-group">
+                    <button class="btn-primary" onclick="sendStreamRequest()">🚀 流式分析（推荐）</button>
+                    <button class="btn-primary" onclick="sendRequest()" style="background: #6c757d;">📦 普通请求</button>
+                    <button class="btn-secondary" onclick="clearForm()">🔄 重置</button>
+                    <button class="btn-success" onclick="loadExample()">📋 示例</button>
+                </div>
+            </div>
+            
+            <!-- 右侧：结果展示 -->
+            <div class="panel">
+                <h2>📊 响应结果</h2>
+                <div id="result" class="result-content">
+                    <p style="color: #999; text-align: center; padding: 40px;">
+                        请配置参数并发送请求
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // 标签切换
+        function switchTab(tabName) {
+            // 隐藏所有标签内容
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // 移除所有标签的active类
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // 显示选中的标签
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.classList.add('active');
+        }
+        
+        // 发送请求
+        async function sendRequest() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = `
+                <div class="loading">
+                    正在分析<br>
+                    <small style="color: #999; font-size: 13px; margin-top: 10px; display: block;">
+                        ⏱️ 干预分析通常需要1-3分钟，请耐心等待...
+                    </small>
+                </div>
+            `;
+            
+            try {
+                // 构建请求体
+                const requestBody = {
+                    query: document.getElementById('query').value
+                };
+                
+                // 添加参考索引（如果填写）
+                const refIndex = document.getElementById('refIndex').value;
+                if (refIndex) {
+                    requestBody.reference_sample_index = parseInt(refIndex);
+                }
+                
+                // 添加目标强度（如果填写）
+                const targetStrength = document.getElementById('targetStrength').value;
+                if (targetStrength) {
+                    requestBody.target_strength = parseFloat(targetStrength);
+                }
+                
+                // 添加调整变量（如果选中）
+                const adjustFactors = [];
+                document.querySelectorAll('.checkbox-item input[type="checkbox"]:checked').forEach(cb => {
+                    adjustFactors.push(cb.value);
+                });
+                if (adjustFactors.length > 0) {
+                    requestBody.adjust_factors = adjustFactors;
+                }
+                
+                // 添加观测配比（如果填写）
+                const cement = document.getElementById('cement').value;
+                if (cement) {
+                    requestBody.observed_config = {
+                        cement: parseFloat(cement),
+                        blast_furnace_slag: parseFloat(document.getElementById('bfs').value) || 0,
+                        fly_ash: parseFloat(document.getElementById('flyAsh').value) || 0,
+                        water: parseFloat(document.getElementById('water').value) || 180,
+                        superplasticizer: parseFloat(document.getElementById('sp').value) || 0,
+                        coarse_aggregate: parseFloat(document.getElementById('ca').value) || 1000,
+                        fine_aggregate: parseFloat(document.getElementById('fa').value) || 800,
+                        age: parseInt(document.getElementById('age').value) || 28
+                    };
+                }
+                
+                // 验证
+                if (!requestBody.query) {
+                    resultDiv.innerHTML = '<div class="error">❌ 请输入查询内容</div>';
+                    return;
+                }
+                
+                // 发送请求
+                const apiUrl = document.getElementById('apiUrl').value;
+                const timeout = parseInt(document.getElementById('timeout').value) * 1000;
+                
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), timeout);
+                
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(requestBody),
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId);
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || `HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                displayResult(data, requestBody);
+                
+            } catch (error) {
+                let errorHtml = `
+                    <div class="error">
+                        <h3>❌ 请求失败</h3>
+                        <p><strong>错误信息：</strong>${error.message}</p>
+                `;
+                
+                // 检测是否是超时错误
+                if (error.name === 'AbortError' || error.message.includes('aborted')) {
+                    errorHtml += `
+                        <div style="margin-top: 15px; padding: 10px; background: #fff3cd; border-left: 3px solid #ffc107; border-radius: 4px;">
+                            <strong>⏱️ 请求超时</strong>
+                            <p style="margin: 5px 0;">干预分析通常需要1-3分钟完成。请尝试：</p>
+                            <ul style="margin: 5px 0 0 20px;">
+                                <li>增加超时时间（高级选项 → 请求超时，建议设置为180-300秒）</li>
+                                <li>刷新页面重试，服务器可能已经完成分析</li>
+                                <li>检查终端日志，查看分析进度</li>
+                            </ul>
+                        </div>
+                    `;
+                } else {
+                    errorHtml += `
+                        <p style="font-size: 12px; margin-top: 10px;">
+                            💡 <strong>常见问题：</strong><br>
+                            • 请确保服务器正在运行（python api_server.py）<br>
+                            • 检查API端点是否正确（默认：http://localhost:8000/api/analyze）<br>
+                            • 查看浏览器控制台和终端日志获取详细错误信息
+                        </p>
+                    `;
+                }
+                
+                errorHtml += `</div>`;
+                resultDiv.innerHTML = errorHtml;
+            }
+        }
+        
+        // 流式请求（使用 Server-Sent Events）
+        async function sendStreamRequest() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = `
+                <div class="loading">
+                    正在连接到服务器<br>
+                    <small style="color: #999; font-size: 13px; margin-top: 10px; display: block;">
+                        ⏱️ 将实时显示分析进度...
+                    </small>
+                </div>
+            `;
+            
+            try {
+                // 构建请求体（与普通请求相同）
+                const requestBody = {
+                    query: document.getElementById('query').value
+                };
+                
+                const refIndex = document.getElementById('refIndex').value;
+                if (refIndex) {
+                    requestBody.reference_sample_index = parseInt(refIndex);
+                }
+                
+                const targetStrength = document.getElementById('targetStrength').value;
+                if (targetStrength) {
+                    requestBody.target_strength = parseFloat(targetStrength);
+                }
+                
+                const adjustFactors = [];
+                document.querySelectorAll('.checkbox-item input[type="checkbox"]:checked').forEach(cb => {
+                    adjustFactors.push(cb.value);
+                });
+                if (adjustFactors.length > 0) {
+                    requestBody.adjust_factors = adjustFactors;
+                }
+                
+                const cement = document.getElementById('cement').value;
+                if (cement) {
+                    requestBody.observed_config = {
+                        cement: parseFloat(cement),
+                        blast_furnace_slag: parseFloat(document.getElementById('bfs').value) || 0,
+                        fly_ash: parseFloat(document.getElementById('flyAsh').value) || 0,
+                        water: parseFloat(document.getElementById('water').value) || 180,
+                        superplasticizer: parseFloat(document.getElementById('sp').value) || 0,
+                        coarse_aggregate: parseFloat(document.getElementById('ca').value) || 1000,
+                        fine_aggregate: parseFloat(document.getElementById('fa').value) || 1000,
+                        age: parseInt(document.getElementById('age').value) || 28
+                    };
+                }
+                
+                if (!requestBody.query) {
+                    resultDiv.innerHTML = '<div class="error">❌ 请输入查询内容</div>';
+                    return;
+                }
+                
+                // 显示进度日志
+                let progressHtml = `
+                    <div class="success">🔄 正在实时分析...</div>
+                    <div class="result-item">
+                        <h3>📤 请求参数</h3>
+                        <pre>${JSON.stringify(requestBody, null, 2)}</pre>
+                    </div>
+                    <div class="result-item">
+                        <h3>📡 实时进度</h3>
+                        <div id="progress-log" style="background: #f5f5f5; padding: 15px; border-radius: 6px; max-height: 400px; overflow-y: auto; font-family: monospace; font-size: 13px; line-height: 1.8;">
+                        </div>
+                    </div>
+                `;
+                resultDiv.innerHTML = progressHtml;
+                
+                const progressLog = document.getElementById('progress-log');
+                
+                // 创建 EventSource
+                const apiUrl = document.getElementById('apiUrl').value.replace('/analyze', '/analyze_stream');
+                
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'text/event-stream'
+                    },
+                    body: JSON.stringify(requestBody)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                
+                let buffer = '';
+                let finalResult = null;
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    
+                    // 处理 SSE 消息
+                    const lines = buffer.split('\n\n');
+                    buffer = lines.pop(); // 保留不完整的行
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+                            
+                            if (data.type === 'start') {
+                                progressLog.innerHTML += `<div style="color: #667eea; font-weight: bold;">▶️ ${data.message}</div>`;
+                            } else if (data.type === 'progress') {
+                                progressLog.innerHTML += `<div style="color: #555;">${data.message}</div>`;
+                                progressLog.scrollTop = progressLog.scrollHeight;
+                            } else if (data.type === 'result') {
+                                finalResult = data.data;
+                            } else if (data.type === 'end') {
+                                progressLog.innerHTML += `<div style="color: #28a745; font-weight: bold; margin-top: 10px;">✅ ${data.message}</div>`;
+                            } else if (data.type === 'error') {
+                                progressLog.innerHTML += `<div style="color: #dc3545; font-weight: bold;">❌ ${data.message}</div>`;
+                            }
+                        }
+                    }
+                }
+                
+                // 显示最终结果
+                if (finalResult) {
+                    displayResult(finalResult, requestBody);
+                }
+                
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h3>❌ 流式请求失败</h3>
+                        <p><strong>错误信息：</strong>${error.message}</p>
+                        <p style="font-size: 12px; margin-top: 10px;">
+                            💡 <strong>提示：</strong><br>
+                            • 请确保服务器正在运行<br>
+                            • 流式接口：/api/analyze_stream<br>
+                            • 如果流式失败，可以尝试使用普通请求按钮
+                        </p>
+                    </div>
+                `;
+            }
+        }
+        
+        // 显示结果
+        function displayResult(data, requestBody) {
+            const resultDiv = document.getElementById('result');
+            
+            let html = '<div class="success">✅ 分析成功</div>';
+            
+            // 请求摘要
+            html += '<div class="result-item">';
+            html += '<h3>📤 请求参数</h3>';
+            html += `<pre>${JSON.stringify(requestBody, null, 2)}</pre>`;
+            html += '</div>';
+            
+            // 分析类型
+            html += '<div class="result-item">';
+            html += '<h3>🔍 分析类型</h3>';
+            html += `<p><strong>${data.analysis_type}</strong></p>`;
+            html += `<p style="font-size: 13px; color: #666; margin-top: 5px;">${data.routing_reasoning}</p>`;
+            html += '</div>';
+            
+            // 目标变量
+            html += '<div class="result-item">';
+            html += '<h3>🎯 目标变量</h3>';
+            html += `<p><strong>${data.target_variable}</strong></p>`;
+            html += '</div>';
+            
+            // 因果分析结果
+            html += '<div class="result-item">';
+            html += '<h3>📊 因果分析结果</h3>';
+            html += `<pre>${JSON.stringify(data.causal_results, null, 2)}</pre>`;
+            html += '</div>';
+            
+            // 分析摘要
+            html += '<div class="result-item">';
+            html += '<h3>📝 分析摘要</h3>';
+            html += `<p style="line-height: 1.8;">${data.analysis_summary}</p>`;
+            html += '</div>';
+            
+            // 优化配比（如果有）
+            if (data.optimized_config) {
+                html += '<div class="result-item">';
+                html += '<h3>🔧 优化配比方案</h3>';
+                html += '<div class="config-grid">';
+                for (const [key, value] of Object.entries(data.optimized_config)) {
+                    if (key !== 'concrete_compressive_strength') {
+                        html += `<div class="config-item"><strong>${formatVarName(key)}:</strong> ${value.toFixed(1)}</div>`;
+                    }
+                }
+                html += '</div>';
+                if (data.predicted_strength) {
+                    html += `<p style="margin-top: 15px; font-size: 16px;"><strong>预测强度：</strong> <span style="color: #28a745; font-size: 20px;">${data.predicted_strength.toFixed(2)} MPa</span></p>`;
+                }
+                if (data.optimization_summary) {
+                    html += `<pre style="margin-top: 10px;">${data.optimization_summary}</pre>`;
+                }
+                html += '</div>';
+            }
+            
+            // 决策建议
+            html += '<div class="result-item">';
+            html += '<h3>💡 决策建议</h3>';
+            html += `<div style="line-height: 1.8; white-space: pre-wrap;">${data.recommendations}</div>`;
+            html += '</div>';
+            
+            resultDiv.innerHTML = html;
+        }
+        
+        // 变量名格式化
+        function formatVarName(name) {
+            const nameMap = {
+                'cement': '水泥',
+                'blast_furnace_slag': '高炉矿渣',
+                'fly_ash': '粉煤灰',
+                'water': '水',
+                'superplasticizer': '减水剂',
+                'coarse_aggregate': '粗骨料',
+                'fine_aggregate': '细骨料',
+                'age': '龄期'
+            };
+            return nameMap[name] || name;
+        }
+        
+        // 清空表单
+        function clearForm() {
+            document.getElementById('query').value = '';
+            document.getElementById('refIndex').value = '';
+            document.getElementById('targetStrength').value = '';
+            document.getElementById('cement').value = '';
+            document.getElementById('bfs').value = '';
+            document.getElementById('flyAsh').value = '';
+            document.getElementById('water').value = '';
+            document.getElementById('sp').value = '';
+            document.getElementById('ca').value = '';
+            document.getElementById('fa').value = '';
+            document.getElementById('age').value = '';
+            
+            // 取消所有复选框
+            document.querySelectorAll('.checkbox-item input[type="checkbox"]').forEach(cb => {
+                cb.checked = false;
+            });
+            
+            document.getElementById('result').innerHTML = '<p style="color: #999; text-align: center; padding: 40px;">请配置参数并发送请求</p>';
+        }
+        
+        // 加载示例
+        function loadExample() {
+            // 示例1：干预分析 - 指定变量和目标强度
+            document.getElementById('query').value = '如何通过调整水泥和粉煤灰使强度达到45 MPa？';
+            document.getElementById('targetStrength').value = '45';
+            
+            // 勾选调整变量
+            document.getElementById('adj_cement').checked = true;
+            document.getElementById('adj_fly').checked = true;
+            
+            // 设置观测配比
+            document.getElementById('cement').value = '300';
+            document.getElementById('bfs').value = '0';
+            document.getElementById('flyAsh').value = '0';
+            document.getElementById('water').value = '185';
+            document.getElementById('sp').value = '3';
+            document.getElementById('ca').value = '1050';
+            document.getElementById('fa').value = '850';
+            document.getElementById('age').value = '28';
+            
+            alert('✅ 已加载示例：干预分析 - 通过调整水泥和粉煤灰达到目标强度');
+        }
+    </script>
+</body>
+</html>
+
