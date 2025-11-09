@@ -440,14 +440,23 @@ def router_agent(state: CausalAnalysisState) -> dict:
 【应用场景】高性能混凝土配合比设计与强度优化（基于UCI真实数据集，Yeh 1998）
 
 【分析类型】
+0. **纯预测查询** ⚠️ **重要：优先识别**
+   - 关键词："强度是多少"、"预测强度"、"强度多少"、"能达到多少"、"这个配比强度"
+   - 特征：用户提供配比，只问强度值，**不要求优化或分析原因**
+   - 处理：选择 **counterfactual** 类型，系统会直接返回预测强度
+   - ❌ 错误：识别为attribution（归因分析会做复杂计算，用户只想要预测值）
+
 1. **attribution**（归因分析）- 用于回答"为什么XX变化了？"、"原因是什么？"
    - 对比两个时期的数据，识别导致目标变量变化的根本原因
+   - 例如："为什么强度下降了？"、"哪些因素导致强度提高？"
 
 2. **intervention**（干预分析）- 用于回答"如何改进XX？"、"哪个因素最有效？"
    - 评估不同措施的效果，找出最有影响力的可控变量
+   - 例如："如何提高强度？"、"水泥和水哪个影响更大？"
 
-3. **counterfactual**（反事实分析）- 用于回答"如果...会怎样？"
+3. **counterfactual**（反事实分析）- 用于回答"如果...会怎样？"、"强度是多少？"
    - 针对具体案例模拟假设场景，预测改变某个变量后的结果
+   - **纯预测**也归为此类（给定配比，预测强度）
    - **必须从用户问题中提取**：干预变量名、原始值、新值
 
 【因果图可用变量】（基于UCI真实数据集，仅9个原始变量）
@@ -508,31 +517,39 @@ def router_agent(state: CausalAnalysisState) -> dict:
     }}
 }}
 
-示例1（绝对值）：
+示例1（纯预测）⚠️：
+用户问："强度是多少？"（已提供observed_config）
+回复：{{"analysis_type": "counterfactual", "target_variable": "concrete_compressive_strength", "reasoning": "用户只问强度值，属于纯预测查询"}}
+
+示例2（绝对值）：
 用户问："如果水用量从200降到150，强度会怎样？"
-回复：{{"intervention_variable": "water", "original_value": 200, "intervention_value": 150}}
+回复：{{"analysis_type": "counterfactual", "intervention_variable": "water", "original_value": 200, "intervention_value": 150}}
 
-示例2（单变量运算）：
+示例3（单变量运算）：
 用户问："如果水泥增加50 kg/m³，强度会怎样？"
-回复：{{"intervention_variable": "cement", "operation": "add", "operand": 50}}
+回复：{{"analysis_type": "counterfactual", "intervention_variable": "cement", "operation": "add", "operand": 50}}
 
-示例3（多变量运算）：
+示例4（多变量运算）：
 用户问："添加矿渣100 kg/m³，减少水泥50 kg/m³，强度会怎样？"
-回复：{{"interventions": [{{"variable": "blast_furnace_slag", "operation": "add", "operand": 100}}, {{"variable": "cement", "operation": "subtract", "operand": 50}}]}}
+回复：{{"analysis_type": "counterfactual", "interventions": [{{"variable": "blast_furnace_slag", "operation": "add", "operand": 100}}, {{"variable": "cement", "operation": "subtract", "operand": 50}}]}}
 
-示例4（多变量绝对值）：
+示例5（多变量绝对值）：
 用户问："如果水泥300、水180、龄期28天，强度是多少？"
-回复：{{"intervention_variable": {{"cement": 300, "water": 180, "age": 28}}}}
+回复：{{"analysis_type": "counterfactual", "intervention_variable": {{"cement": 300, "water": 180, "age": 28}}}}
 
-示例5（目标导向 - 百分比）：
+示例6（目标导向 - 百分比）：
 用户问："如果我想强度提升10%，应该如何调整配合比？"
 回复：{{"analysis_type": "intervention", "target_improvement": 10, "specified_variables": []}}
 
-示例6（目标导向 - 绝对值）：
+示例7（目标导向 - 绝对值）：
 用户问："现在我想强度达到45，水泥和粉煤灰应该怎么调？"
 回复：{{"analysis_type": "intervention", "target_value": 45, "specified_variables": ["cement", "fly_ash"]}}
 
-示例7（目标导向 - 指定变量）：
+示例8（探索性问题）：
+用户问："如何提高强度？"（未提供配比）
+回复：{{"analysis_type": "intervention", "target_variable": "concrete_compressive_strength", "reasoning": "探索性问题，评估各因素的效果"}}
+
+示例9（目标导向 - 指定变量）：
 用户问："如何通过调整水和减水剂使强度达到50 MPa？"
 回复：{{"analysis_type": "intervention", "target_value": 50, "specified_variables": ["water", "superplasticizer"]}}
 
@@ -708,10 +725,56 @@ def causal_analyst_agent(state: CausalAnalysisState) -> dict:
                 interventions = intervention_value
                 print(f"  📊 多变量绝对值干预: {interventions}")
             
-            # 情况5：没有提取到干预信息，使用默认
+            # 情况5：没有提取到干预信息
             if not interventions:
-                interventions = {'water': 150}  # 默认降低用水量
-                print(f"  ⚠️  未提取到干预信息，使用默认干预: {interventions}")
+                # 检查是否是纯预测场景（用户提供了observed_config但没有干预意图）
+                if state.get('observed_config') is not None:
+                    # 这是纯预测场景，直接返回observed_config的预测强度
+                    print(f"  ℹ️  检测到纯预测场景（无干预意图）")
+                    print(f"  → 直接预测用户配比的强度，不执行任何干预")
+                    
+                    # 预测基准强度并直接返回
+                    observed_config_full = state['observed_config'].copy()
+                    if 'concrete_compressive_strength' not in observed_config_full:
+                        print(f"  🔮 预测强度...")
+                        from dowhy import gcm
+                        
+                        intervention_funcs = {
+                            'cement': lambda x: observed_config_full.get('cement', 280),
+                            'blast_furnace_slag': lambda x: observed_config_full.get('blast_furnace_slag', 0),
+                            'fly_ash': lambda x: observed_config_full.get('fly_ash', 0),
+                            'water': lambda x: observed_config_full.get('water', 180),
+                            'superplasticizer': lambda x: observed_config_full.get('superplasticizer', 0),
+                            'coarse_aggregate': lambda x: observed_config_full.get('coarse_aggregate', 1000),
+                            'fine_aggregate': lambda x: observed_config_full.get('fine_aggregate', 800),
+                            'age': lambda x: observed_config_full.get('age', 28)
+                        }
+                        samples = gcm.interventional_samples(
+                            _causal_model_instance.causal_model,
+                            intervention_funcs,
+                            num_samples_to_draw=100
+                        )
+                        predicted_strength = float(samples['concrete_compressive_strength'].mean())
+                        observed_config_full['concrete_compressive_strength'] = predicted_strength
+                        print(f"  ✓ 预测强度: {predicted_strength:.2f} MPa")
+                    else:
+                        predicted_strength = observed_config_full['concrete_compressive_strength']
+                        print(f"  ✓ 强度: {predicted_strength:.2f} MPa")
+                    
+                    # 直接返回预测结果，不执行干预
+                    return {
+                        "type": "counterfactual",
+                        "target": target_variable,
+                        "original_value": predicted_strength,
+                        "counterfactual_value": predicted_strength,
+                        "causal_effect": 0.0,
+                        "interventions": {},
+                        "summary": f"纯预测分析完成。预测的混凝土抗压强度为 {predicted_strength:.2f} MPa。"
+                    }
+                else:
+                    # 没有observed_config，使用默认干预（用于展示功能）
+                    interventions = {'water': 150}  # 默认降低用水量
+                    print(f"  ⚠️  未提取到干预信息，使用默认干预: {interventions}")
             
             # 选择观测数据的来源
             # 优先级: observed_config > reference_sample_index > 自动匹配 > 默认样本
