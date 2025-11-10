@@ -158,38 +158,224 @@ data: {"type": "result", "data": { 完整结果 }}
 data: {"type": "end", "message": "分析完成"}
 ```
 
-#### 🔧 前端使用
+#### 🔧 前端使用（完整示例）
 
+**HTML结构**：
+```html
+<div id="progress-log"></div>
+<div id="result-container"></div>
+```
+
+**JavaScript实现**：
 ```javascript
-const response = await fetch('http://localhost:8000/api/analyze_stream', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    query: "如何达到45 MPa？",
-    observed_config: {...}
-  })
-});
-
-const reader = response.body.getReader();
-const decoder = new TextDecoder();
-
-while (true) {
-  const { value, done } = await reader.read();
-  if (done) break;
+async function streamAnalyze(requestData) {
+  const progressLog = document.getElementById('progress-log');
+  const resultContainer = document.getElementById('result-container');
   
-  const chunk = decoder.decode(value);
-  for (const line of chunk.split('\n\n')) {
-    if (line.startsWith('data: ')) {
-      const event = JSON.parse(line.slice(6));
+  // 清空之前的内容
+  progressLog.innerHTML = '';
+  resultContainer.innerHTML = '';
+  
+  try {
+    const response = await fetch('http://localhost:8000/api/analyze_stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestData)
+    });
+    
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
       
-      if (event.type === 'progress') {
-        console.log(event.message);  // 显示进度
-      } else if (event.type === 'result') {
-        console.log('完成:', event.data);
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop(); // 保留不完整的行
+      
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const event = JSON.parse(line.slice(6));
+            
+            if (event.type === 'start') {
+              progressLog.innerHTML += `<div class="start">🚀 ${event.message}</div>`;
+            }
+            else if (event.type === 'progress') {
+              // 检测分隔符，添加样式
+              const msg = event.message;
+              if (msg.startsWith('─')) {
+                progressLog.innerHTML += `<div class="separator-light">${msg}</div>`;
+              } else if (msg.startsWith('═')) {
+                progressLog.innerHTML += `<div class="separator-bold">${msg}</div>`;
+              } else if (msg === '') {
+                progressLog.innerHTML += '<div class="blank-line">&nbsp;</div>';
+              } else {
+                // 普通进度消息
+                progressLog.innerHTML += `<div class="progress">${msg}</div>`;
+              }
+              // 自动滚动到底部
+              progressLog.scrollTop = progressLog.scrollHeight;
+            }
+            else if (event.type === 'result') {
+              // 显示最终结果
+              const data = event.data;
+              resultContainer.innerHTML = `
+                <h3>分析结果</h3>
+                <p><strong>分析类型：</strong>${data.analysis_type}</p>
+                <p><strong>预测强度：</strong>${data.predicted_strength ? data.predicted_strength.toFixed(2) + ' MPa' : 'N/A'}</p>
+                <pre>${JSON.stringify(data, null, 2)}</pre>
+              `;
+            }
+            else if (event.type === 'end') {
+              progressLog.innerHTML += `<div class="end">✅ ${event.message}</div>`;
+            }
+            else if (event.type === 'error') {
+              progressLog.innerHTML += `<div class="error">❌ ${event.message}</div>`;
+            }
+          } catch (e) {
+            console.error('解析事件失败:', e);
+          }
+        }
       }
     }
+  } catch (error) {
+    progressLog.innerHTML += `<div class="error">❌ 连接失败: ${error.message}</div>`;
   }
 }
+
+// 使用示例
+streamAnalyze({
+  query: "如何达到45 MPa？",
+  observed_config: {
+    cement: 300,
+    water: 185,
+    age: 28,
+    blast_furnace_slag: 0,
+    fly_ash: 0,
+    superplasticizer: 3,
+    coarse_aggregate: 1050,
+    fine_aggregate: 850
+  },
+  adjust_factors: ["cement", "fly_ash"],
+  target_strength: 45
+});
+```
+
+**CSS样式（推荐）**：
+```css
+#progress-log {
+  max-height: 500px;
+  overflow-y: auto;
+  background: #f5f5f5;
+  padding: 15px;
+  border-radius: 5px;
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+#progress-log .start {
+  color: #1890ff;
+  font-weight: bold;
+}
+
+#progress-log .progress {
+  color: #333;
+}
+
+#progress-log .separator-light {
+  color: #999;
+  margin: 5px 0;
+}
+
+#progress-log .separator-bold {
+  color: #52c41a;
+  font-weight: bold;
+  margin: 10px 0;
+}
+
+#progress-log .end {
+  color: #52c41a;
+  font-weight: bold;
+  margin-top: 10px;
+}
+
+#progress-log .error {
+  color: #ff4d4f;
+  font-weight: bold;
+}
+
+#progress-log .blank-line {
+  height: 1em;
+}
+```
+
+**事件类型说明**：
+- `start`: 分析开始
+- `progress`: 进度消息（包含Agent执行状态、分隔符、空行等）
+- `result`: 完整的分析结果JSON
+- `end`: 分析完成
+- `error`: 错误消息
+
+**关键实现要点**：
+
+1. **使用buffer处理不完整数据**：
+   ```javascript
+   let buffer = '';
+   buffer += decoder.decode(value, { stream: true });
+   const lines = buffer.split('\n\n');
+   buffer = lines.pop(); // 保留不完整的行
+   ```
+
+2. **识别分隔符类型**：
+   - `─`（轻分隔符）：Agent之间的分隔，颜色较淡
+   - `═`（重分隔符）：分析完成的标记，颜色醒目
+   - 空行：增加可读性
+
+3. **自动滚动**：
+   ```javascript
+   progressLog.scrollTop = progressLog.scrollHeight;
+   ```
+   确保用户始终看到最新进度
+
+4. **错误处理**：
+   - 捕获JSON解析错误
+   - 捕获网络连接错误
+   - 显示友好的错误提示
+
+5. **超时设置**（可选）：
+   ```javascript
+   const controller = new AbortController();
+   setTimeout(() => controller.abort(), 180000); // 3分钟超时
+   
+   fetch(url, {
+     signal: controller.signal,
+     ...
+   });
+   ```
+
+**实时效果**：
+```
+🚀 开始分析...
+
+📋 使用用户输入的观测配比
+🎯 目标强度: 45 MPa
+
+🔍 Router Agent 正在分析您的问题...
+📋 分析类型: intervention
+...
+
+────────────────────────────────────────────────────────
+
+📊 Causal Analyst Agent 正在执行因果分析...
+...
+
+════════════════════════════════════════════════════════
+✅ 分析完成
+════════════════════════════════════════════════════════
 ```
 
 ---
@@ -237,8 +423,12 @@ while (true) {
 
 ### 1. 什么情况下使用`/api/analyze` vs `/api/analyze_stream`？
 
-- **批处理/后台任务**: 使用 `/api/analyze`
-- **前端界面/需要实时反馈**: 使用 `/api/analyze_stream` ✨
+- **批处理/后台任务**: 使用 `/api/analyze`（等待完整结果）
+- **前端界面/需要实时反馈**: 使用 `/api/analyze_stream` ✨（推荐）
+  - 用户可以看到实时进度（Router → Analyst → Optimizer → Advisor）
+  - 长时间分析不会感觉"卡住"
+  - 支持格式化输出（分隔符、空行）
+  - 更好的用户体验
 
 ### 2. 为什么没有返回`optimized_config`？
 
@@ -357,23 +547,29 @@ while (true) {
 
 ```python
 import requests
+import json
 
 # 1. 探索性分析
 response = requests.post("http://localhost:8000/api/analyze", 
     json={"query": "如何提高强度？"})
+print(response.json())
 
 # 2. 精确优化
 response = requests.post("http://localhost:8000/api/analyze",
     json={
         "query": "如何达到45 MPa？",
         "observed_config": {
-            "cement": 300, "water": 185, "age": 28, ...
+            "cement": 300, "water": 185, "age": 28,
+            "blast_furnace_slag": 0, "fly_ash": 0,
+            "superplasticizer": 3, "coarse_aggregate": 1050,
+            "fine_aggregate": 850
         },
         "adjust_factors": ["cement", "fly_ash"],
         "target_strength": 45
     })
+print(response.json())
 
-# 3. 流式响应（推荐）
+# 3. 流式响应（推荐）⭐
 response = requests.post("http://localhost:8000/api/analyze_stream",
     json={"query": "提升10%应该怎么调？", "reference_sample_index": 100},
     stream=True)
@@ -382,31 +578,98 @@ for line in response.iter_lines():
     if line and line.startswith(b'data: '):
         event = json.loads(line[6:])
         if event['type'] == 'progress':
-            print(event['message'])
+            print(event['message'])  # 实时显示进度
+        elif event['type'] == 'result':
+            print("\n✅ 分析完成:", event['data'])
+```
+
+### JavaScript
+
+```javascript
+// 流式响应（推荐）⭐
+async function analyze() {
+  const response = await fetch('http://localhost:8000/api/analyze_stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: "如何达到45 MPa？",
+      observed_config: {
+        cement: 300, water: 185, age: 28,
+        blast_furnace_slag: 0, fly_ash: 0,
+        superplasticizer: 3, coarse_aggregate: 1050,
+        fine_aggregate: 850
+      },
+      adjust_factors: ["cement", "fly_ash"],
+      target_strength: 45
+    })
+  });
+  
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n\n');
+    buffer = lines.pop();
+    
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const event = JSON.parse(line.slice(6));
+        if (event.type === 'progress') {
+          console.log(event.message);  // 实时进度
+        } else if (event.type === 'result') {
+          console.log('✅ 完成:', event.data);
+        }
+      }
+    }
+  }
+}
+
+analyze();
 ```
 
 ### cURL
 
 ```bash
-# 探索性分析
+# 1. 探索性分析
 curl -X POST http://localhost:8000/api/analyze \
   -H "Content-Type: application/json" \
   -d '{"query": "如何提高强度？"}'
 
-# 精确优化
+# 2. 精确优化
 curl -X POST http://localhost:8000/api/analyze \
   -H "Content-Type: application/json" \
   -d '{
     "query": "如何达到45 MPa？",
-    "observed_config": {"cement": 300, "water": 185, "age": 28, ...},
+    "observed_config": {
+      "cement": 300, "water": 185, "age": 28,
+      "blast_furnace_slag": 0, "fly_ash": 0,
+      "superplasticizer": 3, "coarse_aggregate": 1050,
+      "fine_aggregate": 850
+    },
     "adjust_factors": ["cement", "fly_ash"],
     "target_strength": 45
   }'
 
-# 流式响应（加 -N 参数）
+# 3. 流式响应（推荐）⭐ 
+# -N 参数禁用缓冲，实时显示输出
 curl -N -X POST http://localhost:8000/api/analyze_stream \
   -H "Content-Type: application/json" \
-  -d '{"query": "提升10%", "reference_sample_index": 100}'
+  -d '{
+    "query": "提升10%应该怎么调？",
+    "reference_sample_index": 100
+  }'
+
+# 流式响应会输出类似：
+# data: {"type": "start", "message": "开始分析..."}
+# data: {"type": "progress", "message": "🔍 Router Agent 正在分析..."}
+# data: {"type": "progress", "message": "────────────────"}
+# data: {"type": "result", "data": {...}}
+# data: {"type": "end", "message": "分析完成"}
 ```
 
 ---

@@ -513,6 +513,7 @@ async def analyze_query_stream(request: QueryRequest):
             
             # 发送开始消息
             yield f"data: {json.dumps({'type': 'start', 'message': '开始分析...'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'progress', 'message': ''}, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0.1)
             
             # 构建状态
@@ -554,6 +555,7 @@ async def analyze_query_stream(request: QueryRequest):
                 
                 # 定期检查输出
                 last_output_len = 0
+                previous_line = ""
                 while not future.done():
                     current_output = output_capture.get_output()
                     if len(current_output) > last_output_len:
@@ -561,7 +563,15 @@ async def analyze_query_stream(request: QueryRequest):
                         # 按行发送
                         for line in new_content.split('\n'):
                             if line.strip():
+                                # 检测Agent标题行，添加分隔符
+                                if "Agent 正在" in line or "Agent正在" in line:
+                                    if previous_line:  # 不是第一个Agent
+                                        yield f"data: {json.dumps({'type': 'progress', 'message': ''}, ensure_ascii=False)}\n\n"
+                                        yield f"data: {json.dumps({'type': 'progress', 'message': '─' * 60}, ensure_ascii=False)}\n\n"
+                                        yield f"data: {json.dumps({'type': 'progress', 'message': ''}, ensure_ascii=False)}\n\n"
+                                
                                 yield f"data: {json.dumps({'type': 'progress', 'message': line}, ensure_ascii=False)}\n\n"
+                                previous_line = line
                         last_output_len = len(current_output)
                     await asyncio.sleep(0.2)
                 
@@ -577,7 +587,22 @@ async def analyze_query_stream(request: QueryRequest):
                 new_content = final_output[last_output_len:]
                 for line in new_content.split('\n'):
                     if line.strip():
+                        # 检测Agent标题行，添加分隔符
+                        if "Agent 正在" in line or "Agent正在" in line:
+                            if previous_line:  # 不是第一个Agent
+                                yield f"data: {json.dumps({'type': 'progress', 'message': ''}, ensure_ascii=False)}\n\n"
+                                yield f"data: {json.dumps({'type': 'progress', 'message': '─' * 60}, ensure_ascii=False)}\n\n"
+                                yield f"data: {json.dumps({'type': 'progress', 'message': ''}, ensure_ascii=False)}\n\n"
+                        
                         yield f"data: {json.dumps({'type': 'progress', 'message': line}, ensure_ascii=False)}\n\n"
+                        previous_line = line
+            
+            # 添加分析完成前的分隔
+            yield f"data: {json.dumps({'type': 'progress', 'message': ''}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'progress', 'message': '═' * 60}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'progress', 'message': '✅ 分析完成'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'progress', 'message': '═' * 60}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'progress', 'message': ''}, ensure_ascii=False)}\n\n"
             
             # 构建响应
             response_data = {
